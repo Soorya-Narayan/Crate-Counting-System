@@ -1,0 +1,288 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Milma Kottayam | Vision Pouch Counting HMI - Goose Industrial Solutions</title>
+    <!-- Google Fonts: Inter & Outfit -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Outfit:wght@500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="/static/css/style.css">
+</head>
+<body class="dark-theme">
+    <!-- Top Navigation Bar -->
+    <header class="app-header">
+        <div class="header-left">
+            <img src="/static/img/goose_logo.png" alt="Goose Industrial Solutions" class="brand-logo goose-logo">
+            <div class="brand-divider"></div>
+            <div class="header-titles">
+                <h1>CRATE VISION COUNTING HMI</h1>
+                <p class="subtitle">MILMA KOTTAYAM DAIRY &bull; CONVEYOR LINE 1</p>
+            </div>
+        </div>
+
+        <div class="header-center">
+            <div class="status-pill active" id="conveyorStatusPill">
+                <span class="pulse-dot"></span>
+                <span id="conveyorStatusText">LINE RUNNING (24 CRATES/MIN)</span>
+            </div>
+            <div class="shift-badge">
+                <span class="badge-label">SHIFT</span>
+                <span class="badge-value">SHIFT 1 (07:30 – 15:30)</span>
+            </div>
+        </div>
+
+        <div class="header-right">
+            <div class="clock-display" id="clockDisplay">11:15:00 AM</div>
+            <img src="/static/img/milma_logo.png" alt="Milma Logo" class="brand-logo milma-logo">
+        </div>
+    </header>
+
+    <!-- Main Container -->
+    <main class="dashboard-container">
+        <!-- Top KPI Telemetry Strip -->
+        <section class="kpi-grid">
+            <div class="kpi-card">
+                <div class="kpi-icon total-pouches-icon">🥛</div>
+                <div class="kpi-info">
+                    <span class="kpi-label">TOTAL POUCHES COUNTED</span>
+                    <h2 class="kpi-value" id="kpiTotalPouches">0</h2>
+                    <span class="kpi-sub">Shift Cumulative Target: 1.5 Lakh</span>
+                </div>
+            </div>
+
+            <div class="kpi-card">
+                <div class="kpi-icon total-crates-icon">📦</div>
+                <div class="kpi-info">
+                    <span class="kpi-label">CRATES AUDITED</span>
+                    <h2 class="kpi-value" id="kpiTotalCrates">0</h2>
+                    <span class="kpi-sub"><span id="kpiPassedCrates" class="text-success">0</span> Passed &bull; <span id="kpiFailedCrates" class="text-danger">0</span> Alerts</span>
+                </div>
+            </div>
+
+            <div class="kpi-card">
+                <div class="kpi-icon pass-rate-icon">🎯</div>
+                <div class="kpi-info">
+                    <span class="kpi-label">QUALITY PASS RATE</span>
+                    <h2 class="kpi-value text-success" id="kpiAccuracy">100.0%</h2>
+                    <span class="kpi-sub">Target SLA: &ge; 99.5%</span>
+                </div>
+            </div>
+
+            <div class="kpi-card">
+                <div class="kpi-icon rate-icon">⚡</div>
+                <div class="kpi-info">
+                    <span class="kpi-label">LINE THROUGHPUT</span>
+                    <h2 class="kpi-value" id="kpiSpeed">24.0 <span class="unit">cpm</span></h2>
+                    <span class="kpi-sub">Nominal Rate: ~480 pouches/min</span>
+                </div>
+            </div>
+        </section>
+
+        <!-- Main Inspection & Verdict Workspace -->
+        <div class="workspace-grid">
+            <!-- Left Panel: Live Stream & Simulation Controls -->
+            <section class="viewport-card">
+                <div class="card-header">
+                    <div class="card-title-group">
+                        <span class="live-tag">● LIVE STREAM</span>
+                        <h3>Overhead Camera Feed (Baumer VCXG.2-32C)</h3>
+                    </div>
+                    <div class="feed-telemetry">
+                        <span id="telemetryLatency">Latency: 30.2 ms</span>
+                        <span class="pipe">|</span>
+                        <span id="telemetryFps">33.1 FPS</span>
+                    </div>
+                </div>
+
+                <!-- Video Viewport -->
+                <div class="video-container">
+                    <img id="liveVideoFeed" src="/video_feed" alt="Live Crate Vision Stream" class="video-stream">
+                    <div class="video-overlay-reticle"></div>
+                </div>
+
+                <!-- Interactive Control Bar -->
+                <div class="controls-panel">
+                    <div class="control-group">
+                        <button id="btnToggleConveyor" class="btn btn-primary">
+                            <span class="btn-icon">⏸</span> <span id="btnToggleText">Pause Line</span>
+                        </button>
+                        <button id="btnTriggerCrate" class="btn btn-secondary">
+                            <span class="btn-icon">▶</span> Trigger Next Crate
+                        </button>
+                        <button id="btnInjectUnderfill" class="btn btn-warning">
+                            <span class="btn-icon">⚠️</span> Inject Defect (19 Packets)
+                        </button>
+                    </div>
+
+                    <div class="control-group variant-selector-group">
+                        <label for="variantSelect">Milk Variant:</label>
+                        <select id="variantSelect" class="form-select">
+                            <option value="auto" selected>Auto-Cycle (Orange/Violet/Green)</option>
+                            <option value="orange">Orange (Rich Milk 500ml)</option>
+                            <option value="violet">Violet (Toned Milk 500ml)</option>
+                            <option value="green">Green (Smart Milk 500ml)</option>
+                        </select>
+                    </div>
+
+                    <div class="control-group speed-slider-group">
+                        <label for="speedSlider">Line Speed: <span id="speedDisplay">24</span> cpm</label>
+                        <input type="range" id="speedSlider" min="6" max="36" value="24" step="2" class="form-range">
+                    </div>
+                </div>
+            </section>
+
+            <!-- Right Panel: Crate Verdict & Production Stats -->
+            <section class="verdict-sidebar">
+                <!-- Large Status Verdict Card -->
+                <div class="verdict-box passed" id="verdictBox">
+                    <div class="verdict-header">
+                        <span class="verdict-sublabel">LATEST CRATE VERDICT</span>
+                        <span class="crate-timestamp" id="crateTimestamp">--:--:--</span>
+                    </div>
+                    <div class="verdict-main">
+                        <div class="verdict-icon" id="verdictIcon">✓</div>
+                        <div class="verdict-text-block">
+                            <h2 class="verdict-title" id="verdictTitle">PASSED</h2>
+                            <p class="verdict-desc" id="verdictSubtitle">Full Crate (20 / 20 Pouches)</p>
+                        </div>
+                    </div>
+                    <div class="verdict-meta">
+                        <div class="meta-item">
+                            <span class="meta-label">CRATE ID</span>
+                            <span class="meta-value font-mono" id="crateId">KTM-CRT-000000</span>
+                        </div>
+                        <div class="meta-item">
+                            <span class="meta-label">COUNT</span>
+                            <span class="meta-value font-mono" id="crateCount">20 / 20</span>
+                        </div>
+                        <div class="meta-item">
+                            <span class="meta-label">DISCREPANCY</span>
+                            <span class="meta-value font-mono" id="crateDiff">0</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Active Variant Card -->
+                <div class="panel-card variant-card">
+                    <div class="panel-header">
+                        <h4>CURRENT BATCH VARIANT</h4>
+                        <span class="conf-badge" id="variantConf">Conf: 99.9%</span>
+                    </div>
+                    <div class="variant-content">
+                        <div class="variant-chip orange" id="variantChip">
+                            <span class="chip-color-dot" id="chipColorDot"></span>
+                            <span class="chip-title" id="chipTitle">Orange (Rich Milk - 500 ml)</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Shift Variant Breakdown Bars -->
+                <div class="panel-card breakdown-card">
+                    <div class="panel-header">
+                        <h4>VARIANT PRODUCTION DISTRIBUTION</h4>
+                        <span class="panel-sub">Total Shift Packets</span>
+                    </div>
+                    <div class="variant-progress-list">
+                        <!-- Orange -->
+                        <div class="progress-row">
+                            <div class="progress-labels">
+                                <span class="p-name"><span class="dot dot-orange"></span> Orange (Rich Milk)</span>
+                                <span class="p-count" id="countOrange">0 pkts</span>
+                            </div>
+                            <div class="progress-bar-bg">
+                                <div class="progress-fill fill-orange" id="barOrange" style="width: 33%"></div>
+                            </div>
+                        </div>
+
+                        <!-- Violet -->
+                        <div class="progress-row">
+                            <div class="progress-labels">
+                                <span class="p-name"><span class="dot dot-violet"></span> Violet (Toned Milk)</span>
+                                <span class="p-count" id="countViolet">0 pkts</span>
+                            </div>
+                            <div class="progress-bar-bg">
+                                <div class="progress-fill fill-violet" id="barViolet" style="width: 33%"></div>
+                            </div>
+                        </div>
+
+                        <!-- Green -->
+                        <div class="progress-row">
+                            <div class="progress-labels">
+                                <span class="p-name"><span class="dot dot-green"></span> Green (Smart Milk)</span>
+                                <span class="p-count" id="countGreen">0 pkts</span>
+                            </div>
+                            <div class="progress-bar-bg">
+                                <div class="progress-fill fill-green" id="barGreen" style="width: 33%"></div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </section>
+        </div>
+
+        <!-- Bottom Audit Log Section -->
+        <section class="audit-section">
+            <div class="audit-header">
+                <div class="audit-titles">
+                    <h3>INCIDENT & DEFECT AUDIT LOG</h3>
+                    <p class="subtitle">Real-time log of underfilled, overfilled, or anomalous crates flagged by AI</p>
+                </div>
+                <div class="audit-actions">
+                    <a href="/api/export_csv" class="btn btn-outline" id="btnExportCsv">
+                        <span class="btn-icon">📥</span> Export Shift Report (CSV)
+                    </a>
+                    <button class="btn btn-outline-danger" id="btnResetShift">
+                        <span class="btn-icon">↺</span> Reset Shift Counters
+                    </button>
+                </div>
+            </div>
+
+            <!-- Incident Table -->
+            <div class="table-responsive">
+                <table class="audit-table">
+                    <thead>
+                        <tr>
+                            <th>Time</th>
+                            <th>Crate ID</th>
+                            <th>Milk Variant</th>
+                            <th>Detected Count</th>
+                            <th>Target Count</th>
+                            <th>Discrepancy</th>
+                            <th>Verdict</th>
+                            <th>Latency</th>
+                            <th>Action</th>
+                        </tr>
+                    </thead>
+                    <tbody id="incidentTableBody">
+                        <tr class="empty-row">
+                            <td colspan="9">No incidents logged yet. All crates passing quality verification (20/20).</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </section>
+    </main>
+
+    <!-- Modal Dialog for Audit Snapshot Inspection -->
+    <div class="modal-backdrop" id="snapshotModal">
+        <div class="modal-dialog">
+            <div class="modal-header">
+                <h4 id="modalTitle">Audit Snapshot: KTM-CRT-000000</h4>
+                <button class="modal-close" id="modalCloseBtn">&times;</button>
+            </div>
+            <div class="modal-body">
+                <img id="modalSnapshotImg" src="" alt="Crate Audit Snapshot">
+            </div>
+            <div class="modal-footer">
+                <span class="modal-meta" id="modalMeta">Flagged Underfill &bull; 19 / 20 Packets</span>
+                <button class="btn btn-secondary" id="modalDismissBtn">Close Inspector</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Scripts -->
+    <script src="/static/js/dashboard.js"></script>
+</body>
+</html>
