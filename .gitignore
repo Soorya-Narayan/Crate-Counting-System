@@ -1,0 +1,25 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# OS artifacts
+.DS_Store
+Thumbs.db
+
+# Heavy model weights and checkpoints
+*.pt
+*.onnx
+*.engine
+*.bin
+
+# Demo outputs & logs
+demo_output_*.jpg
+milma_counted_output.jpg
+runs/
+*.log
+
+# Environments
+venv/
+env/
+.env
