@@ -57,7 +57,8 @@ latest_telemetry: Dict[str, Any] = {
     "detected_objects": [],
     "total_detections": 0
 }
-state_lock = threading.Lock()
+frame_cond = threading.Condition()
+latest_frame_id = 0
 
 # Milma Variant Color Ranges (HSV)
 MILMA_COLORS = {
@@ -404,8 +405,9 @@ def video_capture_worker():
 
             ret, jpeg = cv2.imencode('.jpg', stream_frame, [cv2.IMWRITE_JPEG_QUALITY, 80])
             if ret:
-                with state_lock:
+                with frame_cond:
                     latest_jpeg_frame = jpeg.tobytes()
+                    latest_frame_id += 1
                     latest_telemetry.update({
                         "camera_source": camera_source,
                         "camera_connected": baumer_connected,
@@ -418,6 +420,7 @@ def video_capture_worker():
                         "detected_objects": telemetry["detected_objects"],
                         "total_detections": telemetry["total_detections"]
                     })
+                    frame_cond.notify_all()
         else:
             time.sleep(0.02)
 
@@ -437,29 +440,59 @@ def index():
 
 def generate_mjpeg_stream():
     """Yields continuous JPEG frames for the <img> tag in the dashboard."""
+    local_frame_id = -1
     while True:
-        with state_lock:
-            frame_bytes = latest_jpeg_frame
+        try:
+            with frame_cond:
+                if latest_frame_id == local_frame_id:
+                    frame_cond.wait(timeout=0.5)
+                frame_bytes = latest_jpeg_frame
+                local_frame_id = latest_frame_id
 
-        if frame_bytes is not None:
-            yield (b'--frame\r\n'
-                   b'Content-Type: image/jpeg\r\n\r\n' + frame_bytes + b'\r\n')
-        time.sleep(0.035)
+            if frame_bytes is not None:
+                header = (
+                    b'--frame\r\n'
+                    b'Content-Type: image/jpeg\r\n'
+                    b'Content-Length: ' + str(len(frame_bytes)).encode('ascii') + b'\r\n\r\n'
+                )
+                yield header + frame_bytes + b'\r\n'
+        except GeneratorExit:
+            break
+        except Exception:
+            break
 
 
 @app.route('/video_feed')
 def video_feed():
-    return Response(
+    res = Response(
         generate_mjpeg_stream(),
         mimetype='multipart/x-mixed-replace; boundary=frame'
     )
+    res.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate, max-age=0'
+    res.headers['Pragma'] = 'no-cache'
+    res.headers['Expires'] = '0'
+    return res
+
+
+@app.route('/api/frame')
+def single_frame():
+    """Returns single latest JPEG frame. Universal fallback for any browser."""
+    with frame_cond:
+        frame_bytes = latest_jpeg_frame
+    if frame_bytes is None:
+        return ("No frame captured yet", 503)
+    res = Response(frame_bytes, mimetype='image/jpeg')
+    res.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate, max-age=0'
+    res.headers['Pragma'] = 'no-cache'
+    res.headers['Expires'] = '0'
+    return res
 
 
 @app.route('/api/status')
 def get_status():
     """Returns current live camera, YOLO object detections, and color telemetry."""
-    with state_lock:
-        return jsonify(latest_telemetry)
+    with frame_cond:
+        return jsonify(dict(latest_telemetry))
 
 
 @app.route('/api/set_source', methods=['POST'])

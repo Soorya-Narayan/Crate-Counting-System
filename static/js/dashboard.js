@@ -251,10 +251,39 @@ document.addEventListener('DOMContentLoaded', () => {
         fetchStatus();
     });
 
+    // Resilient Video Stream Management
+    let framePollInterval = null;
+
+    function startFramePollingFallback() {
+        if (framePollInterval) return;
+        console.warn("Switching to fast frame polling fallback (/api/frame)...");
+        framePollInterval = setInterval(() => {
+            const nextImg = new Image();
+            nextImg.onload = () => {
+                liveVideoFeed.src = nextImg.src;
+            };
+            nextImg.src = `/api/frame?t=${Date.now()}`;
+        }, 200);
+    }
+
+    liveVideoFeed.onerror = () => {
+        console.warn("Video feed stream error detected. Initiating recovery...");
+        setTimeout(() => {
+            liveVideoFeed.src = `/video_feed?t=${Date.now()}`;
+        }, 1500);
+    };
+
+    // If stream has not rendered any pixels after 3 seconds, activate fast frame fallback
+    setTimeout(() => {
+        if (!liveVideoFeed.naturalWidth || liveVideoFeed.naturalWidth === 0) {
+            startFramePollingFallback();
+        }
+    }, 3000);
+
     // Snapshot Download
     btnSnapshot.addEventListener('click', () => {
         const a = document.createElement('a');
-        a.href = `/video_feed?t=${Date.now()}`;
+        a.href = `/api/frame?t=${Date.now()}`;
         a.download = `milma_yolo_capture_${Date.now()}.jpg`;
         document.body.appendChild(a);
         a.click();
@@ -272,7 +301,19 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     });
 
-    // Initial fetch and 250ms polling loop
-    fetchStatus();
-    setInterval(fetchStatus, 250);
+    // Sequential Telemetry Polling (Prevents connection backlog)
+    let isFetching = false;
+    async function pollTelemetryLoop() {
+        if (!isFetching) {
+            isFetching = true;
+            try {
+                await fetchStatus();
+            } finally {
+                isFetching = false;
+            }
+        }
+        setTimeout(pollTelemetryLoop, 400);
+    }
+
+    pollTelemetryLoop();
 });
