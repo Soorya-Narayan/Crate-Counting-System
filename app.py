@@ -330,7 +330,7 @@ def process_yolo_and_colors(frame: np.ndarray) -> Tuple[np.ndarray, Dict[str, An
 # ==============================================================================
 def video_capture_worker():
     """Continuously fetches frames, runs YOLO + Color classification, and feeds stream."""
-    global baumer_cam, baumer_connected, camera_source, latest_jpeg_frame, latest_telemetry
+    global baumer_cam, baumer_connected, camera_source, latest_jpeg_frame, latest_telemetry, latest_frame_id
 
     fps_count = 0
     fps_timer = time.time()
