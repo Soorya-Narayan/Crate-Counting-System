@@ -82,7 +82,7 @@ def test_capture(delay=5000, packet_size=1440):
 
             h, w = info.get("height", 1536), info.get("width", 2048)
             img = raw_frame.reshape((h, w))
-            bgr = cv2.cvtColor(img, cv2.COLOR_BayerRG2BGR)
+            bgr = cv2.cvtColor(img, cv2.COLOR_BayerBG2BGR)
 
             out_file = "baumer_captured_frame.jpg"
             cv2.imwrite(out_file, bgr)

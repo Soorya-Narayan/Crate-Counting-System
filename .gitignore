@@ -25,6 +25,7 @@ env/
 .env
 
 # Camera captures
-baumer_captured_frame.jpg
-baumer_live_capture.jpg
+baumer_*.jpg
+test_*.jpg
+live_*.jpg
 snapshots/
