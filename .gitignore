@@ -23,3 +23,8 @@ runs/
 venv/
 env/
 .env
+
+# Camera captures
+baumer_captured_frame.jpg
+baumer_live_capture.jpg
+snapshots/

@@ -86,8 +86,12 @@
             <section class="viewport-card">
                 <div class="card-header">
                     <div class="card-title-group">
-                        <span class="live-tag">● LIVE STREAM</span>
-                        <h3>Overhead Camera Feed (Baumer VCXG.2-32C)</h3>
+                        <span class="live-tag" id="liveStreamBadge">● LIVE STREAM</span>
+                        <h3 id="streamSourceTitle">Overhead Camera Feed (Simulated Conveyor)</h3>
+                    </div>
+                    <div class="source-toggle-group">
+                        <button id="btnSrcSim" class="btn-source active">Simulated</button>
+                        <button id="btnSrcBaumer" class="btn-source">📷 Baumer VCXG.2-32C</button>
                     </div>
                     <div class="feed-telemetry">
                         <span id="telemetryLatency">Latency: 30.2 ms</span>
@@ -104,7 +108,7 @@
 
                 <!-- Interactive Control Bar -->
                 <div class="controls-panel">
-                    <div class="control-group">
+                    <div class="control-group" id="conveyorControlGroup">
                         <button id="btnToggleConveyor" class="btn btn-primary">
                             <span class="btn-icon">⏸</span> <span id="btnToggleText">Pause Line</span>
                         </button>
@@ -116,7 +120,13 @@
                         </button>
                     </div>
 
-                    <div class="control-group variant-selector-group">
+                    <div class="control-group" id="cameraExposureGroup" style="display: none;">
+                        <label for="exposureSlider">Camera Exposure: <span id="exposureDisplay">30</span> ms</label>
+                        <input type="range" id="exposureSlider" min="5" max="80" value="30" step="5" class="form-range">
+                        <button id="btnCaptureSnap" class="btn btn-secondary btn-sm" style="margin-left: 10px;">📸 Snapshot</button>
+                    </div>
+
+                    <div class="control-group variant-selector-group" id="variantSelectorGroup">
                         <label for="variantSelect">Milk Variant:</label>
                         <select id="variantSelect" class="form-select">
                             <option value="auto" selected>Auto-Cycle (Orange/Violet/Green)</option>
@@ -126,7 +136,7 @@
                         </select>
                     </div>
 
-                    <div class="control-group speed-slider-group">
+                    <div class="control-group speed-slider-group" id="speedSliderGroup">
                         <label for="speedSlider">Line Speed: <span id="speedDisplay">24</span> cpm</label>
                         <input type="range" id="speedSlider" min="6" max="36" value="24" step="2" class="form-range">
                     </div>

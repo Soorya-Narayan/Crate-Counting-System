@@ -58,6 +58,17 @@ document.addEventListener('DOMContentLoaded', () => {
     const speedDisplay = document.getElementById('speedDisplay');
     const btnResetShift = document.getElementById('btnResetShift');
 
+    // Camera Source & Exposure Elements
+    const btnSrcSim = document.getElementById('btnSrcSim');
+    const btnSrcBaumer = document.getElementById('btnSrcBaumer');
+    const streamSourceTitle = document.getElementById('streamSourceTitle');
+    const cameraExposureGroup = document.getElementById('cameraExposureGroup');
+    const conveyorControlGroup = document.getElementById('conveyorControlGroup');
+    const speedSliderGroup = document.getElementById('speedSliderGroup');
+    const exposureSlider = document.getElementById('exposureSlider');
+    const exposureDisplay = document.getElementById('exposureDisplay');
+    const btnCaptureSnap = document.getElementById('btnCaptureSnap');
+
     // Modal
     const snapshotModal = document.getElementById('snapshotModal');
     const modalTitle = document.getElementById('modalTitle');
@@ -86,8 +97,32 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     }
 
+    let isDraggingExposure = false;
+
     // Render Data onto UI
     function renderDashboard(data) {
+        // 0. Camera Source State
+        if (data.camera_source === 'baumer') {
+            btnSrcBaumer.classList.add('active');
+            btnSrcSim.classList.remove('active');
+            const connStr = data.baumer_connected ? '🟢 ONLINE (169.254.123.85)' : '🟡 CONNECTING...';
+            streamSourceTitle.textContent = `Physical Camera: Baumer VCXG.2-32C • ${connStr}`;
+            cameraExposureGroup.style.display = 'flex';
+            conveyorControlGroup.style.opacity = '0.35';
+            conveyorControlGroup.style.pointerEvents = 'none';
+            if (exposureSlider && !isDraggingExposure) {
+                exposureSlider.value = data.baumer_exposure_ms;
+                exposureDisplay.textContent = Math.round(data.baumer_exposure_ms);
+            }
+        } else {
+            btnSrcSim.classList.add('active');
+            btnSrcBaumer.classList.remove('active');
+            streamSourceTitle.textContent = 'Overhead Camera Feed (Simulated Conveyor)';
+            cameraExposureGroup.style.display = 'none';
+            conveyorControlGroup.style.opacity = '1';
+            conveyorControlGroup.style.pointerEvents = 'auto';
+        }
+
         // 1. Conveyor State
         if (data.conveyor_running) {
             conveyorStatusPill.className = 'status-pill active';
@@ -285,6 +320,51 @@ document.addEventListener('DOMContentLoaded', () => {
             await fetch('/api/reset_shift', { method: 'POST' });
             fetchDashboardStats();
         }
+    });
+
+    // Camera Source Toggles
+    btnSrcSim.addEventListener('click', async () => {
+        await fetch('/api/set_camera_source', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ source: 'simulated' })
+        });
+        fetchDashboardStats();
+    });
+
+    btnSrcBaumer.addEventListener('click', async () => {
+        await fetch('/api/set_camera_source', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ source: 'baumer' })
+        });
+        fetchDashboardStats();
+    });
+
+    // Exposure Control
+    exposureSlider.addEventListener('input', (e) => {
+        isDraggingExposure = true;
+        exposureDisplay.textContent = e.target.value;
+    });
+
+    exposureSlider.addEventListener('change', async (e) => {
+        isDraggingExposure = false;
+        await fetch('/api/set_camera_exposure', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ exposure_ms: parseFloat(e.target.value) })
+        });
+        fetchDashboardStats();
+    });
+
+    btnCaptureSnap.addEventListener('click', () => {
+        // Trigger download of current live frame
+        const a = document.createElement('a');
+        a.href = `/video_feed?t=${Date.now()}`;
+        a.download = `milma_baumer_capture_${Date.now()}.jpg`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
     });
 
     // Initial fetch & loop polling every 500ms

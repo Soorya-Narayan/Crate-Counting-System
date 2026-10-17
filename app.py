@@ -7,8 +7,10 @@ Client: Milma (E.R.C.M.P.U. Ltd.), Kottayam Dairy Plant
 
 Features:
 - Live MJPEG video stream with YOLO instance segmentation overlays.
+- Dual-mode video feed: Simulated Conveyor & Physical Baumer VCXG.2-32C GigE Camera.
 - Real-time shopfloor telemetry: pass/fail verdicts, shift counters, variant breakdown.
 - Interactive controls: simulate live conveyor (24 crates/min), inject underfill defects.
+- Real-time camera exposure adjustment from web dashboard.
 - Incident audit log with timestamped snapshot inspection.
 - Automated shift report CSV export.
 """
@@ -26,6 +28,7 @@ import cv2
 import numpy as np
 
 from milma_counter import MilmaPouchCounter, PouchVariant, CrateStatus, generate_synthetic_milma_crate
+from baumer_camera import BaumerCamera
 
 app = Flask(__name__)
 
@@ -40,6 +43,12 @@ latest_jpeg_frame = None
 incident_history: List[Dict[str, Any]] = []
 audit_snapshots: Dict[str, bytes] = {}  # crate_id -> jpeg bytes
 state_lock = threading.Lock()
+
+# Camera Mode: "simulated" or "baumer"
+camera_source = "simulated"
+baumer_cam = None
+baumer_connected = False
+baumer_exposure_ms = 30.0
 
 # Sequence of variants for auto-cycling
 CYCLE_VARIANTS = [PouchVariant.ORANGE, PouchVariant.VIOLET, PouchVariant.GREEN]
@@ -95,39 +104,84 @@ def conveyor_worker_loop():
 
     crate_seq = 0
     while True:
-        if conveyor_running:
+        if conveyor_running and camera_source == "simulated":
             crate_seq += 1
 
             # Decide variant
             if auto_cycle_variant:
-                # Switch variant every 15 crates to simulate real batch runs
                 if crate_seq % 15 == 0:
                     variant_cycle_idx = (variant_cycle_idx + 1) % len(CYCLE_VARIANTS)
                 cur_var = CYCLE_VARIANTS[variant_cycle_idx]
             else:
                 cur_var = active_variant
 
-            # Inject realistic occasional underfill defect (~5% chance: e.g. 19 pouches)
-            # This demonstrates real-time alert triggering on the operator dashboard
             if crate_seq % 18 == 0:
-                pouches = 19   # Underfilled crate
+                pouches = 19
             elif crate_seq % 43 == 0:
-                pouches = 18   # Severely underfilled crate
+                pouches = 18
             else:
-                pouches = 20   # Normal full crate
+                pouches = 20
 
             process_new_crate(cur_var, pouches)
 
-            # Sleep according to crates_per_minute (24 crates/min = 2.5s per crate)
             delay = 60.0 / max(1.0, crates_per_minute)
             time.sleep(delay)
         else:
             time.sleep(0.2)
 
 
-# Start background conveyor worker thread
+def baumer_worker_loop():
+    """Background worker continuously pulling live frames from physical Baumer camera."""
+    global baumer_cam, baumer_connected, latest_jpeg_frame, latest_crate_result
+
+    while True:
+        if camera_source == "baumer":
+            if baumer_cam is None:
+                try:
+                    print("Connecting to physical Baumer VCXG.2-32C...")
+                    cam = BaumerCamera(camera_ip="169.254.123.85", host_ip="169.254.128.78")
+                    cam.connect()
+                    cam.set_exposure_time(int(baumer_exposure_ms * 1000))
+                    cam.start_stream()
+                    baumer_cam = cam
+                    baumer_connected = True
+                    print("✓ Baumer camera connected and streaming.")
+                except Exception as e:
+                    print(f"Baumer connection error: {e}")
+                    baumer_connected = False
+                    time.sleep(2.0)
+                    continue
+
+            # Fetch live frame
+            frame, info = baumer_cam.get_frame(timeout=0.5)
+            if frame is not None:
+                # Run through detection & counting engine
+                result = counter_engine.process_crate(frame)
+                ret, jpeg = cv2.imencode('.jpg', result.annotated_frame, [cv2.IMWRITE_JPEG_QUALITY, 80])
+                if ret:
+                    with state_lock:
+                        latest_jpeg_frame = jpeg.tobytes()
+                        latest_crate_result = result
+            else:
+                time.sleep(0.01)
+        else:
+            if baumer_cam is not None:
+                try:
+                    baumer_cam.stop_stream()
+                    baumer_cam.disconnect()
+                except Exception:
+                    pass
+                baumer_cam = None
+                baumer_connected = False
+            time.sleep(0.3)
+
+
+# Start background worker threads
 conveyor_thread = threading.Thread(target=conveyor_worker_loop, daemon=True)
 conveyor_thread.start()
+
+baumer_thread = threading.Thread(target=baumer_worker_loop, daemon=True)
+baumer_thread.start()
 
 
 # ==============================================================================
@@ -197,6 +251,9 @@ def get_stats():
             }
 
         return jsonify({
+            "camera_source": camera_source,
+            "baumer_connected": baumer_connected,
+            "baumer_exposure_ms": baumer_exposure_ms,
             "conveyor_running": conveyor_running,
             "crates_per_minute": crates_per_minute,
             "auto_cycle_variant": auto_cycle_variant,
@@ -205,6 +262,32 @@ def get_stats():
             "shift_stats": shift,
             "recent_incidents": history[:10]
         })
+
+
+@app.route('/api/set_camera_source', methods=['POST'])
+def set_camera_source():
+    """Switch video source between 'simulated' and 'baumer'."""
+    global camera_source
+    data = request.json or {}
+    source = data.get("source", "simulated").lower()
+    if source in ["baumer", "live", "camera"]:
+        camera_source = "baumer"
+    else:
+        camera_source = "simulated"
+    return jsonify({"camera_source": camera_source})
+
+
+@app.route('/api/set_camera_exposure', methods=['POST'])
+def set_camera_exposure():
+    """Set Baumer camera exposure time in milliseconds."""
+    global baumer_exposure_ms, baumer_cam
+    data = request.json or {}
+    exp_ms = float(data.get("exposure_ms", 30.0))
+    exp_ms = max(1.0, min(100.0, exp_ms))
+    baumer_exposure_ms = exp_ms
+    if baumer_cam:
+        baumer_cam.set_exposure_time(int(exp_ms * 1000))
+    return jsonify({"baumer_exposure_ms": baumer_exposure_ms})
 
 
 @app.route('/api/trigger_crate', methods=['POST'])

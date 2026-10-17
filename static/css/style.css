@@ -309,6 +309,38 @@ body.dark-theme {
     color: var(--text-primary);
 }
 
+.source-toggle-group {
+    display: flex;
+    background: var(--bg-surface-2);
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+    padding: 2px;
+    gap: 2px;
+}
+
+.btn-source {
+    background: transparent;
+    border: none;
+    color: var(--text-secondary);
+    font-size: 0.76rem;
+    font-weight: 500;
+    padding: 4px 10px;
+    border-radius: 4px;
+    cursor: pointer;
+    transition: all var(--transition-fast);
+}
+
+.btn-source:hover {
+    color: var(--text-primary);
+}
+
+.btn-source.active {
+    background: var(--primary-accent);
+    color: #fff;
+    font-weight: 600;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
+}
+
 .feed-telemetry {
     font-family: var(--font-mono);
     font-size: 0.78rem;
