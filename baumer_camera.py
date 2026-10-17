@@ -74,13 +74,16 @@ class BaumerCamera:
             self.client.connect()
             print("✓ Connected. Acquired CCP control.")
 
-            # Read current settings
+            # Read current settings & enable Auto White Balance
             try:
                 self.current_exposure_us = self.client.read_reg(REG_EXPOSURE_TIME)
                 if self.current_exposure_us < 10000:
                     self.set_exposure_time(25000)
-            except Exception:
-                pass
+                # Enable Continuous Auto White Balance (0x88000100 = 2)
+                self.client.write_reg(0x88000100, 2)
+                print("✓ Hardware Continuous Auto White Balance active.")
+            except Exception as e:
+                print(f"Note setting WB: {e}")
             return True
 
     def set_exposure_time(self, exposure_us: int):
@@ -144,8 +147,8 @@ class BaumerCamera:
         try:
             # Reshape raw 1D array to 2D Bayer
             bayer_img = raw_frame.reshape((h, w))
-            # Demosaic BayerRG8 to BGR color for OpenCV
-            bgr_img = cv2.cvtColor(bayer_img, cv2.COLOR_BayerRG2BGR)
+            # Demosaic BayerBG8 to BGR color for correct color fidelity (Blue is Blue, Red is Red)
+            bgr_img = cv2.cvtColor(bayer_img, cv2.COLOR_BayerBG2BGR)
             return bgr_img, info
         except Exception as e:
             logger.warning(f"Error processing frame: {e}")

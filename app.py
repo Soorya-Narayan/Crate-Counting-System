@@ -60,8 +60,7 @@ COLOR_SPECS = [
         "name": "ORANGE (Rich Milk)",
         "bgr_color": (0, 140, 255),       # Vivid Orange
         "ranges": [
-            (np.array([5, 70, 50]), np.array([22, 255, 255])),
-            (np.array([172, 70, 50]), np.array([180, 255, 255]))
+            (np.array([6, 120, 80]), np.array([21, 255, 255]))
         ]
     },
     {
@@ -69,7 +68,7 @@ COLOR_SPECS = [
         "name": "VIOLET (Toned Milk)",
         "bgr_color": (210, 60, 180),     # Violet / Purple
         "ranges": [
-            (np.array([125, 45, 45]), np.array([165, 255, 255]))
+            (np.array([125, 80, 60]), np.array([160, 255, 255]))
         ]
     },
     {
@@ -77,7 +76,7 @@ COLOR_SPECS = [
         "name": "GREEN (Smart Milk)",
         "bgr_color": (50, 210, 50),      # Bright Green
         "ranges": [
-            (np.array([35, 45, 45]), np.array([88, 255, 255]))
+            (np.array([38, 80, 60]), np.array([85, 255, 255]))
         ]
     }
 ]
@@ -100,8 +99,8 @@ def process_color_detection(frame: np.ndarray) -> Tuple[np.ndarray, Dict[str, An
     total_detections = 0
     all_detections = []
 
-    # Minimum contour area for valid pouch or color patch (scale with resolution)
-    min_area = max(500, int(total_frame_pixels * 0.001))
+    # Minimum contour area for valid pouch or color patch (filter out small shadow fringes)
+    min_area = max(4000, int(total_frame_pixels * 0.006))
 
     for spec in COLOR_SPECS:
         cid = spec["id"]
