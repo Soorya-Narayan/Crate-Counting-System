@@ -1,170 +1,265 @@
 """
-Milma Kottayam Dairy - Real-Time Operator Web Dashboard & HMI
-============================================================
-Application: app.py
+Milma Kottayam Dairy - Live Camera View & Milk Variant Color Detector
+====================================================================
 Company: Goose Industrial Solutions
 Client: Milma (E.R.C.M.P.U. Ltd.), Kottayam Dairy Plant
 
-Features:
-- Live MJPEG video stream with YOLO instance segmentation overlays.
-- Dual-mode video feed: Simulated Conveyor & Physical Baumer VCXG.2-32C GigE Camera.
-- Real-time shopfloor telemetry: pass/fail verdicts, shift counters, variant breakdown.
-- Interactive controls: simulate live conveyor (24 crates/min), inject underfill defects.
-- Real-time camera exposure adjustment from web dashboard.
-- Incident audit log with timestamped snapshot inspection.
-- Automated shift report CSV export.
+Focus:
+- Full-screen/prominent live camera stream from Baumer VCXG.2-32C (GigE Vision 2.0).
+- Real-time multi-spectral color detection for Milma Milk Variants:
+    1. ORANGE (Rich Milk 500ml - High Fat)
+    2. VIOLET (Toned Milk 500ml - Standard Fat)
+    3. GREEN (Smart Milk 500ml - Double Toned)
+- Clean, minimal UI with zero clutter.
 """
 
 import os
-import io
 import time
-import csv
+import socket
+import struct
 import threading
-from datetime import datetime
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Tuple
 
-from flask import Flask, render_template, Response, jsonify, request, send_file
+from flask import Flask, render_template, Response, jsonify, request
 import cv2
 import numpy as np
 
-from milma_counter import MilmaPouchCounter, PouchVariant, CrateStatus, generate_synthetic_milma_crate
 from baumer_camera import BaumerCamera
+from milma_counter import generate_synthetic_milma_crate, PouchVariant
 
 app = Flask(__name__)
 
-# Global Application State
-counter_engine = MilmaPouchCounter()
-active_variant = PouchVariant.ORANGE
-auto_cycle_variant = True
-conveyor_running = True
-crates_per_minute = 24.0   # Default Milma line speed: 24 crates/min
-latest_crate_result = None
-latest_jpeg_frame = None
-incident_history: List[Dict[str, Any]] = []
-audit_snapshots: Dict[str, bytes] = {}  # crate_id -> jpeg bytes
-state_lock = threading.Lock()
-
-# Camera Mode: "simulated" or "baumer"
-camera_source = "simulated"
+# ==============================================================================
+# GLOBAL STATE
+# ==============================================================================
+camera_source = "baumer"       # Default to real Baumer camera
 baumer_cam = None
 baumer_connected = False
 baumer_exposure_ms = 30.0
 
-# Sequence of variants for auto-cycling
-CYCLE_VARIANTS = [PouchVariant.ORANGE, PouchVariant.VIOLET, PouchVariant.GREEN]
-variant_cycle_idx = 0
+latest_jpeg_frame = None
+latest_telemetry: Dict[str, Any] = {
+    "camera_source": "baumer",
+    "camera_connected": False,
+    "fps": 0.0,
+    "exposure_ms": 30.0,
+    "dominant_variant": "NONE",
+    "variant_confidence": 0.0,
+    "color_counts": {"orange": 0, "violet": 0, "green": 0},
+    "color_coverage": {"orange": 0.0, "violet": 0.0, "green": 0.0},
+    "total_detections": 0
+}
+state_lock = threading.Lock()
+
+# ==============================================================================
+# COLOR DETECTION CONFIGURATIONS (MILMA VARIANTS)
+# ==============================================================================
+COLOR_SPECS = [
+    {
+        "id": "orange",
+        "name": "ORANGE (Rich Milk)",
+        "bgr_color": (0, 140, 255),       # Vivid Orange
+        "ranges": [
+            (np.array([5, 70, 50]), np.array([22, 255, 255])),
+            (np.array([172, 70, 50]), np.array([180, 255, 255]))
+        ]
+    },
+    {
+        "id": "violet",
+        "name": "VIOLET (Toned Milk)",
+        "bgr_color": (210, 60, 180),     # Violet / Purple
+        "ranges": [
+            (np.array([125, 45, 45]), np.array([165, 255, 255]))
+        ]
+    },
+    {
+        "id": "green",
+        "name": "GREEN (Smart Milk)",
+        "bgr_color": (50, 210, 50),      # Bright Green
+        "ranges": [
+            (np.array([35, 45, 45]), np.array([88, 255, 255]))
+        ]
+    }
+]
 
 
-def process_new_crate(variant: PouchVariant, num_pouches: int = 20) -> Any:
-    """Simulates a crate passing the camera and processes it through the engine."""
-    global latest_crate_result, latest_jpeg_frame, incident_history, audit_snapshots
+def process_color_detection(frame: np.ndarray) -> Tuple[np.ndarray, Dict[str, Any]]:
+    """
+    Detects Milma milk variants (Orange, Violet, Green) in the input frame,
+    draws bounding boxes and HUD overlays, and computes live color stats.
+    """
+    h, w = frame.shape[:2]
+    annotated = frame.copy()
+    total_frame_pixels = float(h * w)
 
-    # Generate synthetic camera frame
-    raw_frame = generate_synthetic_milma_crate(variant=variant, num_pouches=num_pouches)
+    # Convert to HSV color space
+    hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
 
-    # Process frame through counting engine
-    result = counter_engine.process_crate(raw_frame)
+    counts = {"orange": 0, "violet": 0, "green": 0}
+    coverage = {"orange": 0.0, "violet": 0.0, "green": 0.0}
+    total_detections = 0
+    all_detections = []
 
-    # Encode annotated frame to JPEG for live stream
-    ret, jpeg = cv2.imencode('.jpg', result.annotated_frame, [cv2.IMWRITE_JPEG_QUALITY, 85])
-    jpeg_bytes = jpeg.tobytes() if ret else b''
+    # Minimum contour area for valid pouch or color patch (scale with resolution)
+    min_area = max(500, int(total_frame_pixels * 0.001))
 
-    with state_lock:
-        latest_crate_result = result
-        latest_jpeg_frame = jpeg_bytes
+    for spec in COLOR_SPECS:
+        cid = spec["id"]
+        cname = spec["name"]
+        color_bgr = spec["bgr_color"]
 
-        # If not passed (underfilled or overfilled), record into incident log
-        if result.status != CrateStatus.PASSED:
-            incident_entry = {
-                "crate_id": result.crate_id,
-                "timestamp": datetime.fromtimestamp(result.timestamp).strftime('%H:%M:%S'),
-                "variant": result.dominant_variant.value,
-                "detected_count": result.total_pouches,
-                "expected_count": result.expected_count,
-                "discrepancy": result.total_pouches - result.expected_count,
-                "status": result.status.value,
-                "latency_ms": round(result.latency_ms, 1)
-            }
-            incident_history.insert(0, incident_entry)
-            if len(incident_history) > 50:
-                incident_history.pop()
+        # Combined multi-range mask
+        combined_mask = np.zeros((h, w), dtype=np.uint8)
+        for lower, upper in spec["ranges"]:
+            in_range = cv2.inRange(hsv, lower, upper)
+            combined_mask = cv2.bitwise_or(combined_mask, in_range)
 
-            # Store audit snapshot
-            audit_snapshots[result.crate_id] = jpeg_bytes
+        # Morphological opening and closing to remove noise
+        kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (5, 5))
+        cleaned_mask = cv2.morphologyEx(combined_mask, cv2.MORPH_OPEN, kernel, iterations=1)
+        cleaned_mask = cv2.morphologyEx(cleaned_mask, cv2.MORPH_CLOSE, kernel, iterations=1)
 
-    return result
+        # Calculate coverage %
+        color_pixel_count = np.count_nonzero(cleaned_mask)
+        cov_pct = (color_pixel_count / total_frame_pixels) * 100.0
+        coverage[cid] = round(cov_pct, 2)
+
+        # Find individual color contours
+        contours, _ = cv2.findContours(cleaned_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+
+        for cnt in contours:
+            area = cv2.contourArea(cnt)
+            if area > min_area:
+                x, y, bw, bh = cv2.boundingRect(cnt)
+                # Avoid full screen borders or lighting glare
+                if bw < w * 0.95 and bh < h * 0.95:
+                    counts[cid] += 1
+                    total_detections += 1
+                    all_detections.append({
+                        "id": cid,
+                        "name": cname,
+                        "bbox": (x, y, bw, bh),
+                        "color": color_bgr,
+                        "area": area
+                    })
+
+    # Draw detected color bounding boxes & badges
+    for idx, det in enumerate(all_detections, 1):
+        x, y, bw, bh = det["bbox"]
+        color = det["color"]
+        label = f"{det['name']} #{idx}"
+
+        # Bounding box with glow / corner markers
+        cv2.rectangle(annotated, (x, y), (x + bw, y + bh), color, 2)
+
+        # Label badge background
+        font = cv2.FONT_HERSHEY_SIMPLEX
+        font_scale = 0.6 if w < 1200 else 0.8
+        thickness = 1 if w < 1200 else 2
+        (lw, lh), _ = cv2.getTextSize(label, font, font_scale, thickness)
+        
+        cv2.rectangle(annotated, (x, max(0, y - lh - 10)), (x + lw + 12, max(lh + 10, y)), color, -1)
+        cv2.putText(annotated, label, (x + 6, max(lh, y - 4)), font, font_scale, (255, 255, 255), thickness, cv2.LINE_AA)
+
+    # Determine dominant variant based on counts and coverage
+    dominant = "NONE"
+    dom_conf = 0.0
+
+    scored_variants = [
+        ("ORANGE (Rich Milk)", coverage["orange"], counts["orange"]),
+        ("VIOLET (Toned Milk)", coverage["violet"], counts["violet"]),
+        ("GREEN (Smart Milk)", coverage["green"], counts["green"]),
+    ]
+    # Sort by coverage and counts
+    scored_variants.sort(key=lambda item: (item[1], item[2]), reverse=True)
+    best_name, best_cov, best_count = scored_variants[0]
+
+    if best_cov > 0.4 or best_count > 0:
+        dominant = best_name
+        sum_cov = sum(coverage.values())
+        dom_conf = round((best_cov / sum_cov * 100.0) if sum_cov > 0 else 85.0, 1)
+
+    # Overlaid Top HUD Bar
+    hud_h = 56 if h < 1000 else 72
+    cv2.rectangle(annotated, (0, 0), (w, hud_h), (18, 18, 22), -1)
+    cv2.line(annotated, (0, hud_h), (w, hud_h), (60, 60, 70), 2)
+
+    # Variant pill in HUD
+    hud_font = cv2.FONT_HERSHEY_SIMPLEX
+    hud_scale = 0.65 if w < 1200 else 0.85
+    
+    if "ORANGE" in dominant:
+        badge_col = (0, 140, 255)
+    elif "VIOLET" in dominant:
+        badge_col = (210, 60, 180)
+    elif "GREEN" in dominant:
+        badge_col = (50, 210, 50)
+    else:
+        badge_col = (120, 120, 120)
+
+    cv2.putText(annotated, f"MILMA VARIANT: {dominant}", (20, int(hud_h * 0.65)),
+                hud_font, hud_scale, badge_col, 2, cv2.LINE_AA)
+
+    # Right-aligned color counts in HUD
+    counts_text = f"Orange: {counts['orange']}  |  Violet: {counts['violet']}  |  Green: {counts['green']}"
+    (tw, th), _ = cv2.getTextSize(counts_text, hud_font, hud_scale * 0.85, 1)
+    cv2.putText(annotated, counts_text, (w - tw - 20, int(hud_h * 0.65)),
+                hud_font, hud_scale * 0.85, (220, 220, 220), 1, cv2.LINE_AA)
+
+    telemetry = {
+        "dominant_variant": dominant,
+        "variant_confidence": dom_conf,
+        "color_counts": counts,
+        "color_coverage": coverage,
+        "total_detections": total_detections
+    }
+
+    return annotated, telemetry
 
 
-def conveyor_worker_loop():
-    """Background worker simulating active conveyor line at specified line speed."""
-    global variant_cycle_idx, active_variant
+# ==============================================================================
+# BACKGROUND VIDEO ACQUISITION WORKER
+# ==============================================================================
+def video_capture_worker():
+    """Background worker continuously fetching frames, running color detection, and updating stream."""
+    global baumer_cam, baumer_connected, camera_source, latest_jpeg_frame, latest_telemetry
 
-    # Initial frame
-    process_new_crate(PouchVariant.ORANGE, 20)
+    fps_count = 0
+    fps_timer = time.time()
+    current_fps = 0.0
 
-    crate_seq = 0
+    sim_variants = [PouchVariant.ORANGE, PouchVariant.VIOLET, PouchVariant.GREEN]
+    sim_idx = 0
+    sim_counter = 0
+
     while True:
-        if conveyor_running and camera_source == "simulated":
-            crate_seq += 1
+        frame = None
 
-            # Decide variant
-            if auto_cycle_variant:
-                if crate_seq % 15 == 0:
-                    variant_cycle_idx = (variant_cycle_idx + 1) % len(CYCLE_VARIANTS)
-                cur_var = CYCLE_VARIANTS[variant_cycle_idx]
-            else:
-                cur_var = active_variant
-
-            if crate_seq % 18 == 0:
-                pouches = 19
-            elif crate_seq % 43 == 0:
-                pouches = 18
-            else:
-                pouches = 20
-
-            process_new_crate(cur_var, pouches)
-
-            delay = 60.0 / max(1.0, crates_per_minute)
-            time.sleep(delay)
-        else:
-            time.sleep(0.2)
-
-
-def baumer_worker_loop():
-    """Background worker continuously pulling live frames from physical Baumer camera."""
-    global baumer_cam, baumer_connected, latest_jpeg_frame, latest_crate_result
-
-    while True:
         if camera_source == "baumer":
             if baumer_cam is None:
                 try:
-                    print("Connecting to physical Baumer VCXG.2-32C...")
+                    print("Connecting to Baumer VCXG.2-32C at 169.254.123.85...")
                     cam = BaumerCamera(camera_ip="169.254.123.85", host_ip="169.254.128.78")
                     cam.connect()
                     cam.set_exposure_time(int(baumer_exposure_ms * 1000))
                     cam.start_stream()
                     baumer_cam = cam
                     baumer_connected = True
-                    print("✓ Baumer camera connected and streaming.")
+                    print("✓ Baumer camera online and streaming.")
                 except Exception as e:
-                    print(f"Baumer connection error: {e}")
+                    print(f"Baumer connection note: {e}")
                     baumer_connected = False
                     time.sleep(2.0)
                     continue
 
-            # Fetch live frame
-            frame, info = baumer_cam.get_frame(timeout=0.5)
-            if frame is not None:
-                # Run through detection & counting engine
-                result = counter_engine.process_crate(frame)
-                ret, jpeg = cv2.imencode('.jpg', result.annotated_frame, [cv2.IMWRITE_JPEG_QUALITY, 80])
-                if ret:
-                    with state_lock:
-                        latest_jpeg_frame = jpeg.tobytes()
-                        latest_crate_result = result
+            # Fetch frame from physical camera
+            raw_frame, info = baumer_cam.get_frame(timeout=0.6)
+            if raw_frame is not None:
+                frame = raw_frame
             else:
                 time.sleep(0.01)
         else:
+            # Simulated fallback
             if baumer_cam is not None:
                 try:
                     baumer_cam.stop_stream()
@@ -173,21 +268,60 @@ def baumer_worker_loop():
                     pass
                 baumer_cam = None
                 baumer_connected = False
-            time.sleep(0.3)
+
+            sim_counter += 1
+            if sim_counter % 30 == 0:
+                sim_idx = (sim_idx + 1) % len(sim_variants)
+            frame = generate_synthetic_milma_crate(variant=sim_variants[sim_idx], num_pouches=20)
+            time.sleep(0.06)
+
+        if frame is not None:
+            # FPS Calculation
+            fps_count += 1
+            now = time.time()
+            if now - fps_timer >= 1.0:
+                current_fps = round(fps_count / (now - fps_timer), 1)
+                fps_count = 0
+                fps_timer = now
+
+            # Run real-time Milma color detection
+            annotated_frame, telemetry = process_color_detection(frame)
+
+            # Downsample display copy for ultra-low latency web streaming if high res
+            h, w = annotated_frame.shape[:2]
+            if w > 1280:
+                scale = 1280.0 / w
+                stream_frame = cv2.resize(annotated_frame, (1280, int(h * scale)), interpolation=cv2.INTER_LINEAR)
+            else:
+                stream_frame = annotated_frame
+
+            ret, jpeg = cv2.imencode('.jpg', stream_frame, [cv2.IMWRITE_JPEG_QUALITY, 80])
+            if ret:
+                with state_lock:
+                    latest_jpeg_frame = jpeg.tobytes()
+                    latest_telemetry.update({
+                        "camera_source": camera_source,
+                        "camera_connected": baumer_connected,
+                        "fps": current_fps,
+                        "exposure_ms": baumer_exposure_ms,
+                        "dominant_variant": telemetry["dominant_variant"],
+                        "variant_confidence": telemetry["variant_confidence"],
+                        "color_counts": telemetry["color_counts"],
+                        "color_coverage": telemetry["color_coverage"],
+                        "total_detections": telemetry["total_detections"]
+                    })
+        else:
+            time.sleep(0.02)
 
 
-# Start background worker threads
-conveyor_thread = threading.Thread(target=conveyor_worker_loop, daemon=True)
-conveyor_thread.start()
-
-baumer_thread = threading.Thread(target=baumer_worker_loop, daemon=True)
-baumer_thread.start()
+# Start background video thread
+video_thread = threading.Thread(target=video_capture_worker, daemon=True)
+video_thread.start()
 
 
 # ==============================================================================
-# FLASK HTTP & STREAMING ROUTES
+# FLASK WEB ROUTES
 # ==============================================================================
-
 @app.route('/')
 def index():
     return render_template('index.html')
@@ -202,7 +336,7 @@ def generate_mjpeg_stream():
         if frame_bytes is not None:
             yield (b'--frame\r\n'
                    b'Content-Type: image/jpeg\r\n\r\n' + frame_bytes + b'\r\n')
-        time.sleep(0.04)  # ~25 FPS stream refresh
+        time.sleep(0.035)  # ~28 FPS
 
 
 @app.route('/video_feed')
@@ -213,63 +347,19 @@ def video_feed():
     )
 
 
-@app.route('/api/stats')
-def get_stats():
-    """Returns current real-time metrics and system state."""
+@app.route('/api/status')
+def get_status():
+    """Returns current live camera and color detection telemetry."""
     with state_lock:
-        res = latest_crate_result
-        history = list(incident_history)
-
-        shift = {
-            "total_crates": counter_engine.shift_total_crates,
-            "passed_crates": counter_engine.shift_passed_crates,
-            "failed_crates": counter_engine.shift_failed_crates,
-            "accuracy_pct": round(
-                (counter_engine.shift_passed_crates / counter_engine.shift_total_crates * 100.0)
-                if counter_engine.shift_total_crates > 0 else 100.0, 1
-            ),
-            "total_pouches": sum(counter_engine.shift_variant_counts.values()),
-            "variant_totals": {
-                "orange": counter_engine.shift_variant_counts[PouchVariant.ORANGE],
-                "violet": counter_engine.shift_variant_counts[PouchVariant.VIOLET],
-                "green": counter_engine.shift_variant_counts[PouchVariant.GREEN],
-            }
-        }
-
-        latest_data = None
-        if res is not None:
-            latest_data = {
-                "crate_id": res.crate_id,
-                "timestamp": datetime.fromtimestamp(res.timestamp).strftime('%H:%M:%S'),
-                "total_pouches": res.total_pouches,
-                "expected_count": res.expected_count,
-                "status": res.status.value,
-                "is_passed": (res.status == CrateStatus.PASSED),
-                "variant": res.dominant_variant.value,
-                "variant_confidence": round(res.variant_confidence * 100.0, 1),
-                "latency_ms": round(res.latency_ms, 1)
-            }
-
-        return jsonify({
-            "camera_source": camera_source,
-            "baumer_connected": baumer_connected,
-            "baumer_exposure_ms": baumer_exposure_ms,
-            "conveyor_running": conveyor_running,
-            "crates_per_minute": crates_per_minute,
-            "auto_cycle_variant": auto_cycle_variant,
-            "active_variant": active_variant.value,
-            "latest_crate": latest_data,
-            "shift_stats": shift,
-            "recent_incidents": history[:10]
-        })
+        return jsonify(latest_telemetry)
 
 
-@app.route('/api/set_camera_source', methods=['POST'])
-def set_camera_source():
-    """Switch video source between 'simulated' and 'baumer'."""
+@app.route('/api/set_source', methods=['POST'])
+def set_source():
+    """Toggle between physical Baumer camera and simulated feed."""
     global camera_source
     data = request.json or {}
-    source = data.get("source", "simulated").lower()
+    source = data.get("source", "baumer").lower()
     if source in ["baumer", "live", "camera"]:
         camera_source = "baumer"
     else:
@@ -277,9 +367,9 @@ def set_camera_source():
     return jsonify({"camera_source": camera_source})
 
 
-@app.route('/api/set_camera_exposure', methods=['POST'])
-def set_camera_exposure():
-    """Set Baumer camera exposure time in milliseconds."""
+@app.route('/api/set_exposure', methods=['POST'])
+def set_exposure():
+    """Sets camera exposure time in milliseconds."""
     global baumer_exposure_ms, baumer_cam
     data = request.json or {}
     exp_ms = float(data.get("exposure_ms", 30.0))
@@ -287,136 +377,10 @@ def set_camera_exposure():
     baumer_exposure_ms = exp_ms
     if baumer_cam:
         baumer_cam.set_exposure_time(int(exp_ms * 1000))
-    return jsonify({"baumer_exposure_ms": baumer_exposure_ms})
-
-
-@app.route('/api/trigger_crate', methods=['POST'])
-def trigger_crate():
-    """Manually triggers a crate with custom variant or count."""
-    data = request.json or {}
-    var_str = data.get("variant", "orange").lower()
-    count = int(data.get("count", 20))
-
-    if "violet" in var_str:
-        var = PouchVariant.VIOLET
-    elif "green" in var_str:
-        var = PouchVariant.GREEN
-    else:
-        var = PouchVariant.ORANGE
-
-    res = process_new_crate(var, count)
-    return jsonify({
-        "status": "success",
-        "crate_id": res.crate_id,
-        "count": res.total_pouches,
-        "verdict": res.status.value
-    })
-
-
-@app.route('/api/toggle_conveyor', methods=['POST'])
-def toggle_conveyor():
-    global conveyor_running
-    conveyor_running = not conveyor_running
-    return jsonify({"conveyor_running": conveyor_running})
-
-
-@app.route('/api/set_speed', methods=['POST'])
-def set_speed():
-    global crates_per_minute
-    data = request.json or {}
-    crates_per_minute = float(data.get("speed", 24.0))
-    crates_per_minute = max(5.0, min(60.0, crates_per_minute))
-    return jsonify({"crates_per_minute": crates_per_minute})
-
-
-@app.route('/api/set_variant', methods=['POST'])
-def set_variant():
-    global active_variant, auto_cycle_variant
-    data = request.json or {}
-    var_str = data.get("variant", "auto").lower()
-
-    if var_str == "auto":
-        auto_cycle_variant = True
-    elif "violet" in var_str:
-        auto_cycle_variant = False
-        active_variant = PouchVariant.VIOLET
-    elif "green" in var_str:
-        auto_cycle_variant = False
-        active_variant = PouchVariant.GREEN
-    else:
-        auto_cycle_variant = False
-        active_variant = PouchVariant.ORANGE
-
-    return jsonify({
-        "auto_cycle": auto_cycle_variant,
-        "active_variant": active_variant.value
-    })
-
-
-@app.route('/api/reset_shift', methods=['POST'])
-def reset_shift():
-    with state_lock:
-        counter_engine.shift_total_crates = 0
-        counter_engine.shift_passed_crates = 0
-        counter_engine.shift_failed_crates = 0
-        counter_engine.shift_variant_counts = {
-            PouchVariant.ORANGE: 0,
-            PouchVariant.VIOLET: 0,
-            PouchVariant.GREEN: 0
-        }
-        incident_history.clear()
-        audit_snapshots.clear()
-    return jsonify({"status": "shift_reset"})
-
-
-@app.route('/api/snapshot/<crate_id>')
-def get_snapshot(crate_id):
-    """Returns stored JPEG audit snapshot of a specific crate."""
-    with state_lock:
-        img_bytes = audit_snapshots.get(crate_id)
-
-    if img_bytes:
-        return Response(img_bytes, mimetype='image/jpeg')
-    return "Snapshot not found", 404
-
-
-@app.route('/api/export_csv')
-def export_csv():
-    """Generates and downloads audit CSV report for Milma shift."""
-    output = io.StringIO()
-    writer = csv.writer(output)
-
-    writer.writerow([
-        "Milma Kottayam Dairy - Conveyor Inspection Shift Report",
-        f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
-        "Solution: Goose Industrial Solutions"
-    ])
-    writer.writerow([])
-    writer.writerow(["Crate ID", "Time", "Variant", "Detected Count", "Expected Count", "Discrepancy", "Verdict", "Latency (ms)"])
-
-    with state_lock:
-        for inc in incident_history:
-            writer.writerow([
-                inc["crate_id"],
-                inc["timestamp"],
-                inc["variant"],
-                inc["detected_count"],
-                inc["expected_count"],
-                inc["discrepancy"],
-                inc["status"],
-                inc["latency_ms"]
-            ])
-
-    output.seek(0)
-    filename = f"Milma_Shift_Audit_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
-    return Response(
-        output.getvalue(),
-        mimetype="text/csv",
-        headers={"Content-Disposition": f"attachment; filename={filename}"}
-    )
+    return jsonify({"exposure_ms": baumer_exposure_ms})
 
 
 if __name__ == '__main__':
     port = int(os.environ.get("PORT", 5050))
-    print(f"\n🚀 Starting Milma Kottayam Operator Dashboard on http://localhost:{port}")
+    print(f"\n🚀 Starting Milma Kottayam Camera & Color Detection Dashboard on http://localhost:{port}")
     app.run(host='0.0.0.0', port=port, debug=False, threaded=True)

@@ -3,296 +3,150 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Milma Kottayam | Vision Pouch Counting HMI - Goose Industrial Solutions</title>
-    <!-- Google Fonts: Inter & Outfit -->
+    <title>Milma Kottayam - Live Camera & Color Detection</title>
+    <!-- Google Fonts -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Outfit:wght@500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;600;700&family=Outfit:wght@600;700;800&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="/static/css/style.css">
 </head>
-<body class="dark-theme">
-    <!-- Top Navigation Bar -->
-    <header class="app-header">
-        <div class="header-left">
-            <img src="/static/img/goose_logo.png" alt="Goose Industrial Solutions" class="brand-logo goose-logo">
-            <div class="brand-divider"></div>
-            <div class="header-titles">
-                <h1>CRATE VISION COUNTING HMI</h1>
-                <p class="subtitle">MILMA KOTTAYAM DAIRY &bull; CONVEYOR LINE 1</p>
-            </div>
-        </div>
-
-        <div class="header-center">
-            <div class="status-pill active" id="conveyorStatusPill">
-                <span class="pulse-dot"></span>
-                <span id="conveyorStatusText">LINE RUNNING (24 CRATES/MIN)</span>
-            </div>
-            <div class="shift-badge">
-                <span class="badge-label">SHIFT</span>
-                <span class="badge-value">SHIFT 1 (07:30 – 15:30)</span>
-            </div>
-        </div>
-
-        <div class="header-right">
-            <div class="clock-display" id="clockDisplay">11:15:00 AM</div>
-            <img src="/static/img/milma_logo.png" alt="Milma Logo" class="brand-logo milma-logo">
-        </div>
-    </header>
-
-    <!-- Main Container -->
-    <main class="dashboard-container">
-        <!-- Top KPI Telemetry Strip -->
-        <section class="kpi-grid">
-            <div class="kpi-card">
-                <div class="kpi-icon total-pouches-icon">🥛</div>
-                <div class="kpi-info">
-                    <span class="kpi-label">TOTAL POUCHES COUNTED</span>
-                    <h2 class="kpi-value" id="kpiTotalPouches">0</h2>
-                    <span class="kpi-sub">Shift Cumulative Target: 1.5 Lakh</span>
+<body>
+    <div class="app-layout">
+        <!-- Top App Bar -->
+        <header class="app-header">
+            <div class="header-left">
+                <img src="/static/img/goose_logo.png" alt="Goose Industrial Solutions" class="logo goose-logo">
+                <div class="divider"></div>
+                <img src="/static/img/milma_logo.png" alt="Milma" class="logo milma-logo">
+                <div class="header-titles">
+                    <h1>MILMA KOTTAYAM DAIRY</h1>
+                    <span class="subtitle">Live Camera View & Milk Variant Color Detector</span>
                 </div>
             </div>
 
-            <div class="kpi-card">
-                <div class="kpi-icon total-crates-icon">📦</div>
-                <div class="kpi-info">
-                    <span class="kpi-label">CRATES AUDITED</span>
-                    <h2 class="kpi-value" id="kpiTotalCrates">0</h2>
-                    <span class="kpi-sub"><span id="kpiPassedCrates" class="text-success">0</span> Passed &bull; <span id="kpiFailedCrates" class="text-danger">0</span> Alerts</span>
+            <div class="header-right">
+                <!-- Source Toggle -->
+                <div class="source-toggle-group">
+                    <button id="btnSrcBaumer" class="btn-source active">📷 Baumer GigE</button>
+                    <button id="btnSrcSim" class="btn-source">Simulated</button>
                 </div>
-            </div>
 
-            <div class="kpi-card">
-                <div class="kpi-icon pass-rate-icon">🎯</div>
-                <div class="kpi-info">
-                    <span class="kpi-label">QUALITY PASS RATE</span>
-                    <h2 class="kpi-value text-success" id="kpiAccuracy">100.0%</h2>
-                    <span class="kpi-sub">Target SLA: &ge; 99.5%</span>
+                <!-- Camera Status Pill -->
+                <div class="status-pill" id="camStatusPill">
+                    <span class="status-dot"></span>
+                    <span id="camStatusText">Connecting...</span>
                 </div>
-            </div>
 
-            <div class="kpi-card">
-                <div class="kpi-icon rate-icon">⚡</div>
-                <div class="kpi-info">
-                    <span class="kpi-label">LINE THROUGHPUT</span>
-                    <h2 class="kpi-value" id="kpiSpeed">24.0 <span class="unit">cpm</span></h2>
-                    <span class="kpi-sub">Nominal Rate: ~480 pouches/min</span>
-                </div>
+                <div class="clock-display" id="clockDisplay">--:--:--</div>
             </div>
-        </section>
+        </header>
 
-        <!-- Main Inspection & Verdict Workspace -->
-        <div class="workspace-grid">
-            <!-- Left Panel: Live Stream & Simulation Controls -->
-            <section class="viewport-card">
-                <div class="card-header">
-                    <div class="card-title-group">
-                        <span class="live-tag" id="liveStreamBadge">● LIVE STREAM</span>
-                        <h3 id="streamSourceTitle">Overhead Camera Feed (Simulated Conveyor)</h3>
+        <!-- Main Workspace: Camera View & Color Detection -->
+        <main class="main-content">
+            <!-- Hero Camera Viewport Card -->
+            <section class="camera-card">
+                <div class="camera-header">
+                    <div class="camera-info">
+                        <span class="live-indicator">● LIVE</span>
+                        <h2 id="cameraTitle">Overhead Stream: Baumer VCXG.2-32C (3.2 MP)</h2>
                     </div>
-                    <div class="source-toggle-group">
-                        <button id="btnSrcSim" class="btn-source active">Simulated</button>
-                        <button id="btnSrcBaumer" class="btn-source">📷 Baumer VCXG.2-32C</button>
-                    </div>
-                    <div class="feed-telemetry">
-                        <span id="telemetryLatency">Latency: 30.2 ms</span>
+                    <div class="camera-telemetry">
+                        <span id="telemetryFps">-- FPS</span>
                         <span class="pipe">|</span>
-                        <span id="telemetryFps">33.1 FPS</span>
+                        <span id="telemetryExp">Exp: 30.0 ms</span>
                     </div>
                 </div>
 
-                <!-- Video Viewport -->
-                <div class="video-container">
-                    <img id="liveVideoFeed" src="/video_feed" alt="Live Crate Vision Stream" class="video-stream">
-                    <div class="video-overlay-reticle"></div>
+                <!-- Main Video Stream -->
+                <div class="video-wrapper">
+                    <img id="liveVideoFeed" src="/video_feed" alt="Milma Live Video Feed" class="video-feed">
+                    <div class="video-crosshair"></div>
                 </div>
 
-                <!-- Interactive Control Bar -->
-                <div class="controls-panel">
-                    <div class="control-group" id="conveyorControlGroup">
-                        <button id="btnToggleConveyor" class="btn btn-primary">
-                            <span class="btn-icon">⏸</span> <span id="btnToggleText">Pause Line</span>
-                        </button>
-                        <button id="btnTriggerCrate" class="btn btn-secondary">
-                            <span class="btn-icon">▶</span> Trigger Next Crate
-                        </button>
-                        <button id="btnInjectUnderfill" class="btn btn-warning">
-                            <span class="btn-icon">⚠️</span> Inject Defect (19 Packets)
-                        </button>
+                <!-- Viewport Control Ribbon -->
+                <div class="camera-ribbon">
+                    <div class="ribbon-item exposure-control">
+                        <label for="exposureRange">Exposure: <span id="exposureVal" class="font-mono">30</span> ms</label>
+                        <input type="range" id="exposureRange" min="5" max="80" value="30" step="5" class="range-slider">
                     </div>
 
-                    <div class="control-group" id="cameraExposureGroup" style="display: none;">
-                        <label for="exposureSlider">Camera Exposure: <span id="exposureDisplay">30</span> ms</label>
-                        <input type="range" id="exposureSlider" min="5" max="80" value="30" step="5" class="form-range">
-                        <button id="btnCaptureSnap" class="btn btn-secondary btn-sm" style="margin-left: 10px;">📸 Snapshot</button>
-                    </div>
-
-                    <div class="control-group variant-selector-group" id="variantSelectorGroup">
-                        <label for="variantSelect">Milk Variant:</label>
-                        <select id="variantSelect" class="form-select">
-                            <option value="auto" selected>Auto-Cycle (Orange/Violet/Green)</option>
-                            <option value="orange">Orange (Rich Milk 500ml)</option>
-                            <option value="violet">Violet (Toned Milk 500ml)</option>
-                            <option value="green">Green (Smart Milk 500ml)</option>
-                        </select>
-                    </div>
-
-                    <div class="control-group speed-slider-group" id="speedSliderGroup">
-                        <label for="speedSlider">Line Speed: <span id="speedDisplay">24</span> cpm</label>
-                        <input type="range" id="speedSlider" min="6" max="36" value="24" step="2" class="form-range">
+                    <div class="ribbon-buttons">
+                        <button id="btnSnapshot" class="btn btn-secondary">
+                            <span>📸 Capture Frame</span>
+                        </button>
+                        <button id="btnFullscreen" class="btn btn-secondary">
+                            <span>⛶ Fullscreen</span>
+                        </button>
                     </div>
                 </div>
             </section>
 
-            <!-- Right Panel: Crate Verdict & Production Stats -->
-            <section class="verdict-sidebar">
-                <!-- Large Status Verdict Card -->
-                <div class="verdict-box passed" id="verdictBox">
-                    <div class="verdict-header">
-                        <span class="verdict-sublabel">LATEST CRATE VERDICT</span>
-                        <span class="crate-timestamp" id="crateTimestamp">--:--:--</span>
-                    </div>
-                    <div class="verdict-main">
-                        <div class="verdict-icon" id="verdictIcon">✓</div>
-                        <div class="verdict-text-block">
-                            <h2 class="verdict-title" id="verdictTitle">PASSED</h2>
-                            <p class="verdict-desc" id="verdictSubtitle">Full Crate (20 / 20 Pouches)</p>
+            <!-- Bottom Color Detection Telemetry Bar -->
+            <section class="color-panel">
+                <!-- Dominant Detected Variant Card -->
+                <div class="variant-result-card" id="variantCard">
+                    <span class="variant-label">DETECTED MILK VARIANT</span>
+                    <div class="variant-hero">
+                        <div class="variant-icon-circle" id="variantIcon">⚪</div>
+                        <div class="variant-text-group">
+                            <h2 class="variant-name" id="variantName">SCANNING FOR POUCHES...</h2>
+                            <p class="variant-desc" id="variantDesc">Place Milma milk pouch under camera</p>
                         </div>
                     </div>
-                    <div class="verdict-meta">
-                        <div class="meta-item">
-                            <span class="meta-label">CRATE ID</span>
-                            <span class="meta-value font-mono" id="crateId">KTM-CRT-000000</span>
-                        </div>
-                        <div class="meta-item">
-                            <span class="meta-label">COUNT</span>
-                            <span class="meta-value font-mono" id="crateCount">20 / 20</span>
-                        </div>
-                        <div class="meta-item">
-                            <span class="meta-label">DISCREPANCY</span>
-                            <span class="meta-value font-mono" id="crateDiff">0</span>
-                        </div>
+                    <div class="variant-conf-bar">
+                        <div class="conf-fill" id="confFill" style="width: 0%;"></div>
                     </div>
                 </div>
 
-                <!-- Active Variant Card -->
-                <div class="panel-card variant-card">
-                    <div class="panel-header">
-                        <h4>CURRENT BATCH VARIANT</h4>
-                        <span class="conf-badge" id="variantConf">Conf: 99.9%</span>
-                    </div>
-                    <div class="variant-content">
-                        <div class="variant-chip orange" id="variantChip">
-                            <span class="chip-color-dot" id="chipColorDot"></span>
-                            <span class="chip-title" id="chipTitle">Orange (Rich Milk - 500 ml)</span>
-                        </div>
-                    </div>
-                </div>
-
-                <!-- Shift Variant Breakdown Bars -->
-                <div class="panel-card breakdown-card">
-                    <div class="panel-header">
-                        <h4>VARIANT PRODUCTION DISTRIBUTION</h4>
-                        <span class="panel-sub">Total Shift Packets</span>
-                    </div>
-                    <div class="variant-progress-list">
-                        <!-- Orange -->
-                        <div class="progress-row">
-                            <div class="progress-labels">
-                                <span class="p-name"><span class="dot dot-orange"></span> Orange (Rich Milk)</span>
-                                <span class="p-count" id="countOrange">0 pkts</span>
-                            </div>
-                            <div class="progress-bar-bg">
-                                <div class="progress-fill fill-orange" id="barOrange" style="width: 33%"></div>
+                <!-- 3 Project Color Detection Counters -->
+                <div class="color-cards-grid">
+                    <!-- Orange Variant -->
+                    <div class="color-stat-card orange">
+                        <div class="color-swatch orange-swatch"></div>
+                        <div class="color-details">
+                            <span class="color-name">ORANGE</span>
+                            <span class="product-name">Rich Milk (High Fat)</span>
+                            <div class="color-metrics">
+                                <span class="metric-count" id="countOrange">0</span>
+                                <span class="metric-label">pouches</span>
+                                <span class="metric-cov" id="covOrange">0.0% cov</span>
                             </div>
                         </div>
+                    </div>
 
-                        <!-- Violet -->
-                        <div class="progress-row">
-                            <div class="progress-labels">
-                                <span class="p-name"><span class="dot dot-violet"></span> Violet (Toned Milk)</span>
-                                <span class="p-count" id="countViolet">0 pkts</span>
-                            </div>
-                            <div class="progress-bar-bg">
-                                <div class="progress-fill fill-violet" id="barViolet" style="width: 33%"></div>
+                    <!-- Violet Variant -->
+                    <div class="color-stat-card violet">
+                        <div class="color-swatch violet-swatch"></div>
+                        <div class="color-details">
+                            <span class="color-name">VIOLET</span>
+                            <span class="product-name">Toned Milk (Standard)</span>
+                            <div class="color-metrics">
+                                <span class="metric-count" id="countViolet">0</span>
+                                <span class="metric-label">pouches</span>
+                                <span class="metric-cov" id="covViolet">0.0% cov</span>
                             </div>
                         </div>
+                    </div>
 
-                        <!-- Green -->
-                        <div class="progress-row">
-                            <div class="progress-labels">
-                                <span class="p-name"><span class="dot dot-green"></span> Green (Smart Milk)</span>
-                                <span class="p-count" id="countGreen">0 pkts</span>
-                            </div>
-                            <div class="progress-bar-bg">
-                                <div class="progress-fill fill-green" id="barGreen" style="width: 33%"></div>
+                    <!-- Green Variant -->
+                    <div class="color-stat-card green">
+                        <div class="color-swatch green-swatch"></div>
+                        <div class="color-details">
+                            <span class="color-name">GREEN</span>
+                            <span class="product-name">Smart Milk (Double Toned)</span>
+                            <div class="color-metrics">
+                                <span class="metric-count" id="countGreen">0</span>
+                                <span class="metric-label">pouches</span>
+                                <span class="metric-cov" id="covGreen">0.0% cov</span>
                             </div>
                         </div>
                     </div>
                 </div>
             </section>
-        </div>
-
-        <!-- Bottom Audit Log Section -->
-        <section class="audit-section">
-            <div class="audit-header">
-                <div class="audit-titles">
-                    <h3>INCIDENT & DEFECT AUDIT LOG</h3>
-                    <p class="subtitle">Real-time log of underfilled, overfilled, or anomalous crates flagged by AI</p>
-                </div>
-                <div class="audit-actions">
-                    <a href="/api/export_csv" class="btn btn-outline" id="btnExportCsv">
-                        <span class="btn-icon">📥</span> Export Shift Report (CSV)
-                    </a>
-                    <button class="btn btn-outline-danger" id="btnResetShift">
-                        <span class="btn-icon">↺</span> Reset Shift Counters
-                    </button>
-                </div>
-            </div>
-
-            <!-- Incident Table -->
-            <div class="table-responsive">
-                <table class="audit-table">
-                    <thead>
-                        <tr>
-                            <th>Time</th>
-                            <th>Crate ID</th>
-                            <th>Milk Variant</th>
-                            <th>Detected Count</th>
-                            <th>Target Count</th>
-                            <th>Discrepancy</th>
-                            <th>Verdict</th>
-                            <th>Latency</th>
-                            <th>Action</th>
-                        </tr>
-                    </thead>
-                    <tbody id="incidentTableBody">
-                        <tr class="empty-row">
-                            <td colspan="9">No incidents logged yet. All crates passing quality verification (20/20).</td>
-                        </tr>
-                    </tbody>
-                </table>
-            </div>
-        </section>
-    </main>
-
-    <!-- Modal Dialog for Audit Snapshot Inspection -->
-    <div class="modal-backdrop" id="snapshotModal">
-        <div class="modal-dialog">
-            <div class="modal-header">
-                <h4 id="modalTitle">Audit Snapshot: KTM-CRT-000000</h4>
-                <button class="modal-close" id="modalCloseBtn">&times;</button>
-            </div>
-            <div class="modal-body">
-                <img id="modalSnapshotImg" src="" alt="Crate Audit Snapshot">
-            </div>
-            <div class="modal-footer">
-                <span class="modal-meta" id="modalMeta">Flagged Underfill &bull; 19 / 20 Packets</span>
-                <button class="btn btn-secondary" id="modalDismissBtn">Close Inspector</button>
-            </div>
-        </div>
+        </main>
     </div>
 
-    <!-- Scripts -->
+    <!-- Frontend Script -->
     <script src="/static/js/dashboard.js"></script>
 </body>
 </html>
