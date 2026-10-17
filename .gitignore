@@ -28,4 +28,5 @@ env/
 baumer_*.jpg
 test_*.jpg
 live_*.jpg
+yolo_*.jpg
 snapshots/

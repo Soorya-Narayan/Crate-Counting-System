@@ -1,5 +1,5 @@
 /**
- * Milma Kottayam Dairy - Live Camera & Color Detection Dashboard
+ * Milma Kottayam Dairy - Live Camera, YOLO Object Detection & Color Classifier
  * Company: Goose Industrial Solutions
  */
 
@@ -18,12 +18,18 @@ document.addEventListener('DOMContentLoaded', () => {
     const telemetryFps = document.getElementById('telemetryFps');
     const telemetryExp = document.getElementById('telemetryExp');
 
-    // Controls
+    // Sliders & Controls
     const exposureRange = document.getElementById('exposureRange');
     const exposureVal = document.getElementById('exposureVal');
+    const confRange = document.getElementById('confRange');
+    const confVal = document.getElementById('confVal');
     const btnSnapshot = document.getElementById('btnSnapshot');
     const btnFullscreen = document.getElementById('btnFullscreen');
     const liveVideoFeed = document.getElementById('liveVideoFeed');
+
+    // Detected Objects Deck
+    const detectedChipsContainer = document.getElementById('detectedChipsContainer');
+    const totalObjectsBadge = document.getElementById('totalObjectsBadge');
 
     // Variant Card
     const variantCard = document.getElementById('variantCard');
@@ -42,13 +48,28 @@ document.addEventListener('DOMContentLoaded', () => {
 
     let isDraggingExposure = false;
 
-    // Clock Updater
+    // Clock
     function updateClock() {
         const now = new Date();
         clockEl.textContent = now.toLocaleTimeString();
     }
     setInterval(updateClock, 1000);
     updateClock();
+
+    // Map object class names to emoji icons
+    function getObjectIcon(name) {
+        const lower = (name || '').toLowerCase();
+        if (lower.includes('scissor')) return '✂️';
+        if (lower.includes('bottle')) return '🧴';
+        if (lower.includes('cup')) return '☕';
+        if (lower.includes('mouse') || lower.includes('cap')) return '🖱️';
+        if (lower.includes('phone')) return '📱';
+        if (lower.includes('pouch') || lower.includes('milk')) return '🥛';
+        if (lower.includes('knife') || lower.includes('blade')) return '🔪';
+        if (lower.includes('book')) return '📖';
+        if (lower.includes('box')) return '📦';
+        return '🔍';
+    }
 
     // Fetch Live Status
     async function fetchStatus() {
@@ -71,7 +92,7 @@ document.addEventListener('DOMContentLoaded', () => {
             if (data.camera_connected) {
                 camStatusPill.className = 'status-pill';
                 camStatusText.textContent = 'BAUMER GIGE ONLINE (169.254.123.85)';
-                cameraTitle.textContent = 'Overhead Stream: Baumer VCXG.2-32C (3.2 MP Color)';
+                cameraTitle.textContent = 'Overhead Stream: Baumer VCXG.2-32C + YOLOv8 AI';
             } else {
                 camStatusPill.className = 'status-pill offline';
                 camStatusText.textContent = 'CONNECTING TO BAUMER...';
@@ -82,7 +103,7 @@ document.addEventListener('DOMContentLoaded', () => {
             btnSrcBaumer.classList.remove('active');
             camStatusPill.className = 'status-pill';
             camStatusText.textContent = 'SIMULATED CONVEYOR FEED';
-            cameraTitle.textContent = 'Simulated Milma Conveyor Stream';
+            cameraTitle.textContent = 'Simulated Milma Conveyor Stream + YOLOv8 AI';
         }
 
         // 2. FPS & Exposure
@@ -94,7 +115,46 @@ document.addEventListener('DOMContentLoaded', () => {
             exposureVal.textContent = Math.round(data.exposure_ms);
         }
 
-        // 3. Dominant Detected Variant Card
+        // 3. Detected Objects Deck
+        const objects = data.detected_objects || [];
+        totalObjectsBadge.textContent = `${objects.length} Object${objects.length === 1 ? '' : 's'}`;
+
+        if (objects.length === 0) {
+            detectedChipsContainer.innerHTML = '<span class="empty-state">No objects currently in camera frame. Place scissors, bottles, cups, or milk pouches in view...</span>';
+        } else {
+            detectedChipsContainer.innerHTML = objects.map(item => {
+                const icon = getObjectIcon(item.object);
+                const colorStr = item.color || 'NEUTRAL';
+                let tagClass = 'tag-neutral';
+                let chipMilmaClass = '';
+
+                if (colorStr.includes('ORANGE')) {
+                    tagClass = 'tag-orange';
+                    chipMilmaClass = 'milma-chip milma-orange';
+                } else if (colorStr.includes('VIOLET')) {
+                    tagClass = 'tag-violet';
+                    chipMilmaClass = 'milma-chip milma-violet';
+                } else if (colorStr.includes('GREEN')) {
+                    tagClass = 'tag-green';
+                    chipMilmaClass = 'milma-chip milma-green';
+                } else if (colorStr.includes('BLUE')) {
+                    tagClass = 'tag-blue';
+                } else if (colorStr.includes('BLACK')) {
+                    tagClass = 'tag-black';
+                }
+
+                return `
+                    <div class="object-chip ${chipMilmaClass}">
+                        <span class="chip-icon">${icon}</span>
+                        <span class="chip-obj-name">${item.object}</span>
+                        <span class="chip-color-tag ${tagClass}">${colorStr}</span>
+                        <span class="chip-conf">${item.confidence}%</span>
+                    </div>
+                `;
+            }).join('');
+        }
+
+        // 4. Dominant Detected Variant Card
         const dom = data.dominant_variant || 'NONE';
         const conf = data.variant_confidence || 0.0;
 
@@ -128,7 +188,7 @@ document.addEventListener('DOMContentLoaded', () => {
             confFill.style.width = '0%';
         }
 
-        // 4. Color Counters & Coverage
+        // 5. Color Counters & Coverage
         const counts = data.color_counts || {};
         const coverage = data.color_coverage || {};
 
@@ -142,7 +202,7 @@ document.addEventListener('DOMContentLoaded', () => {
         covGreen.textContent = `${(coverage.green || 0).toFixed(1)}% cov`;
     }
 
-    // Controls: Source Toggle
+    // Source Toggle
     btnSrcBaumer.addEventListener('click', async () => {
         await fetch('/api/set_source', {
             method: 'POST',
@@ -177,11 +237,25 @@ document.addEventListener('DOMContentLoaded', () => {
         fetchStatus();
     });
 
+    // Confidence Slider
+    confRange.addEventListener('input', (e) => {
+        confVal.textContent = e.target.value;
+    });
+
+    confRange.addEventListener('change', async (e) => {
+        await fetch('/api/set_confidence', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ confidence: parseFloat(e.target.value) / 100.0 })
+        });
+        fetchStatus();
+    });
+
     // Snapshot Download
     btnSnapshot.addEventListener('click', () => {
         const a = document.createElement('a');
         a.href = `/video_feed?t=${Date.now()}`;
-        a.download = `milma_camera_capture_${Date.now()}.jpg`;
+        a.download = `milma_yolo_capture_${Date.now()}.jpg`;
         document.body.appendChild(a);
         a.click();
         document.body.removeChild(a);

@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Milma Kottayam - Live Camera & Color Detection</title>
+    <title>Milma Kottayam - Live YOLO Object & Color Detection</title>
     <!-- Google Fonts -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -20,7 +20,7 @@
                 <img src="/static/img/milma_logo.png" alt="Milma" class="logo milma-logo">
                 <div class="header-titles">
                     <h1>MILMA KOTTAYAM DAIRY</h1>
-                    <span class="subtitle">Live Camera View & Milk Variant Color Detector</span>
+                    <span class="subtitle">Live Camera, YOLO Object Detection & Color Classification</span>
                 </div>
             </div>
 
@@ -41,14 +41,14 @@
             </div>
         </header>
 
-        <!-- Main Workspace: Camera View & Color Detection -->
+        <!-- Main Workspace -->
         <main class="main-content">
             <!-- Hero Camera Viewport Card -->
             <section class="camera-card">
                 <div class="camera-header">
                     <div class="camera-info">
-                        <span class="live-indicator">● LIVE</span>
-                        <h2 id="cameraTitle">Overhead Stream: Baumer VCXG.2-32C (3.2 MP)</h2>
+                        <span class="live-indicator">● LIVE AI STREAM</span>
+                        <h2 id="cameraTitle">Overhead Stream: Baumer VCXG.2-32C + YOLOv8</h2>
                     </div>
                     <div class="camera-telemetry">
                         <span id="telemetryFps">-- FPS</span>
@@ -65,9 +65,18 @@
 
                 <!-- Viewport Control Ribbon -->
                 <div class="camera-ribbon">
-                    <div class="ribbon-item exposure-control">
-                        <label for="exposureRange">Exposure: <span id="exposureVal" class="font-mono">30</span> ms</label>
-                        <input type="range" id="exposureRange" min="5" max="80" value="30" step="5" class="range-slider">
+                    <div class="ribbon-controls">
+                        <!-- Exposure Slider -->
+                        <div class="ribbon-item">
+                            <label for="exposureRange">Exposure: <span id="exposureVal" class="font-mono">30</span> ms</label>
+                            <input type="range" id="exposureRange" min="5" max="80" value="30" step="5" class="range-slider">
+                        </div>
+
+                        <!-- YOLO Confidence Slider -->
+                        <div class="ribbon-item">
+                            <label for="confRange">YOLO Conf: <span id="confVal" class="font-mono">18</span>%</label>
+                            <input type="range" id="confRange" min="10" max="60" value="18" step="2" class="range-slider">
+                        </div>
                     </div>
 
                     <div class="ribbon-buttons">
@@ -81,11 +90,25 @@
                 </div>
             </section>
 
+            <!-- Live Detected Objects Deck -->
+            <section class="objects-deck-card">
+                <div class="deck-header">
+                    <div class="deck-title-group">
+                        <span class="deck-badge">LIVE DETECTIONS</span>
+                        <h3>Objects Identified by YOLO & Classified by Color</h3>
+                    </div>
+                    <span class="deck-counter" id="totalObjectsBadge">0 Objects</span>
+                </div>
+                <div class="detected-chips-container" id="detectedChipsContainer">
+                    <span class="empty-state">No objects currently in camera frame. Place scissors, bottles, cups, or milk pouches in view...</span>
+                </div>
+            </section>
+
             <!-- Bottom Color Detection Telemetry Bar -->
             <section class="color-panel">
                 <!-- Dominant Detected Variant Card -->
                 <div class="variant-result-card" id="variantCard">
-                    <span class="variant-label">DETECTED MILK VARIANT</span>
+                    <span class="variant-label">DOMINANT MILK VARIANT</span>
                     <div class="variant-hero">
                         <div class="variant-icon-circle" id="variantIcon">⚪</div>
                         <div class="variant-text-group">
@@ -108,7 +131,7 @@
                             <span class="product-name">Rich Milk (High Fat)</span>
                             <div class="color-metrics">
                                 <span class="metric-count" id="countOrange">0</span>
-                                <span class="metric-label">pouches</span>
+                                <span class="metric-label">items</span>
                                 <span class="metric-cov" id="covOrange">0.0% cov</span>
                             </div>
                         </div>
@@ -122,7 +145,7 @@
                             <span class="product-name">Toned Milk (Standard)</span>
                             <div class="color-metrics">
                                 <span class="metric-count" id="countViolet">0</span>
-                                <span class="metric-label">pouches</span>
+                                <span class="metric-label">items</span>
                                 <span class="metric-cov" id="covViolet">0.0% cov</span>
                             </div>
                         </div>
@@ -136,7 +159,7 @@
                             <span class="product-name">Smart Milk (Double Toned)</span>
                             <div class="color-metrics">
                                 <span class="metric-count" id="countGreen">0</span>
-                                <span class="metric-label">pouches</span>
+                                <span class="metric-label">items</span>
                                 <span class="metric-cov" id="covGreen">0.0% cov</span>
                             </div>
                         </div>

@@ -313,19 +313,28 @@ body {
     padding: 10px 20px;
     background: var(--bg-surface-2);
     border-top: 1px solid var(--border-subtle);
+    gap: 16px;
+    flex-wrap: wrap;
 }
 
-.exposure-control {
+.ribbon-controls {
     display: flex;
     align-items: center;
-    gap: 12px;
-    font-size: 0.84rem;
+    gap: 24px;
+    flex-wrap: wrap;
+}
+
+.ribbon-item {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font-size: 0.82rem;
     color: var(--text-secondary);
 }
 
 .range-slider {
     -webkit-appearance: none;
-    width: 180px;
+    width: 140px;
     height: 6px;
     border-radius: 3px;
     background: var(--bg-surface-3);
@@ -335,8 +344,8 @@ body {
 
 .range-slider::-webkit-slider-thumb {
     -webkit-appearance: none;
-    width: 16px;
-    height: 16px;
+    width: 15px;
+    height: 15px;
     border-radius: 50%;
     background: var(--brand-blue);
     cursor: pointer;
@@ -369,6 +378,165 @@ body {
 
 .btn-secondary:hover {
     background: rgba(255, 255, 255, 0.1);
+}
+
+/* Objects Deck Card */
+.objects-deck-card {
+    background: var(--bg-surface-1);
+    border: 1px solid var(--border-subtle);
+    border-radius: 12px;
+    padding: 16px 20px;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+
+.deck-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.deck-title-group {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.deck-badge {
+    font-size: 0.7rem;
+    font-weight: 700;
+    background: rgba(2, 132, 199, 0.15);
+    color: #38bdf8;
+    padding: 2px 8px;
+    border-radius: 4px;
+    letter-spacing: 0.05em;
+}
+
+.deck-header h3 {
+    font-family: var(--font-heading);
+    font-size: 0.95rem;
+    font-weight: 600;
+    color: #fff;
+}
+
+.deck-counter {
+    font-family: var(--font-mono);
+    font-size: 0.8rem;
+    font-weight: 600;
+    color: var(--text-secondary);
+    background: var(--bg-surface-2);
+    padding: 3px 10px;
+    border-radius: 20px;
+    border: 1px solid var(--border-subtle);
+}
+
+.detected-chips-container {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    min-height: 44px;
+    align-items: center;
+}
+
+.empty-state {
+    font-size: 0.82rem;
+    color: var(--text-muted);
+    font-style: italic;
+}
+
+.object-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 12px;
+    background: var(--bg-surface-2);
+    border: 1px solid var(--border-subtle);
+    border-radius: 8px;
+    font-size: 0.82rem;
+    transition: transform 0.2s ease, border-color 0.2s ease;
+    animation: fadeIn 0.2s ease;
+}
+
+@keyframes fadeIn {
+    from { opacity: 0; transform: translateY(4px); }
+    to { opacity: 1; transform: translateY(0); }
+}
+
+.object-chip:hover {
+    transform: translateY(-2px);
+    border-color: var(--border-bright);
+}
+
+.object-chip.milma-chip {
+    border-width: 1.5px;
+}
+
+.object-chip.milma-orange {
+    border-color: var(--color-orange);
+    background: rgba(255, 140, 0, 0.08);
+}
+
+.object-chip.milma-violet {
+    border-color: var(--color-violet);
+    background: rgba(168, 85, 247, 0.08);
+}
+
+.object-chip.milma-green {
+    border-color: var(--color-green);
+    background: rgba(34, 197, 94, 0.08);
+}
+
+.chip-icon {
+    font-size: 1.05rem;
+}
+
+.chip-obj-name {
+    font-weight: 700;
+    color: #fff;
+    text-transform: capitalize;
+}
+
+.chip-color-tag {
+    font-family: var(--font-mono);
+    font-size: 0.72rem;
+    font-weight: 600;
+    padding: 2px 6px;
+    border-radius: 4px;
+    background: var(--bg-surface-3);
+    color: var(--text-secondary);
+}
+
+.chip-color-tag.tag-orange {
+    background: rgba(255, 140, 0, 0.2);
+    color: #ff9800;
+}
+
+.chip-color-tag.tag-violet {
+    background: rgba(168, 85, 247, 0.2);
+    color: #c084fc;
+}
+
+.chip-color-tag.tag-green {
+    background: rgba(34, 197, 94, 0.2);
+    color: #4ade80;
+}
+
+.chip-color-tag.tag-blue {
+    background: rgba(56, 189, 248, 0.2);
+    color: #38bdf8;
+}
+
+.chip-color-tag.tag-black {
+    background: rgba(0, 0, 0, 0.5);
+    color: #cbd5e1;
+    border: 1px solid rgba(255, 255, 255, 0.15);
+}
+
+.chip-conf {
+    font-family: var(--font-mono);
+    font-size: 0.7rem;
+    color: var(--text-muted);
 }
 
 /* Bottom Color Detection Section */
