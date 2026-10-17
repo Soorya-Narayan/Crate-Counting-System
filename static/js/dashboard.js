@@ -1,52 +1,49 @@
 /**
- * Milma Kottayam Dairy - Live Camera, YOLO Object Detection & Color Classifier
- * Company: Goose Industrial Solutions
+ * Goose Industrial Solutions - Vision AI Object & Color Classifier
+ * Live Machine Vision Stream + YOLOv8 + Lens ISP Tuning
  */
 
 document.addEventListener('DOMContentLoaded', () => {
-    // Header & Clock
+    // Header & Telemetry Elements
     const clockEl = document.getElementById('clockDisplay');
     const camStatusPill = document.getElementById('camStatusPill');
     const camStatusText = document.getElementById('camStatusText');
+    const cameraTitle = document.getElementById('cameraTitle');
+    const telemetryFps = document.getElementById('telemetryFps');
+    const telemetryExp = document.getElementById('telemetryExp');
+
+    // Video Feed
+    const liveVideoFeed = document.getElementById('liveVideoFeed');
 
     // Source Toggles
     const btnSrcBaumer = document.getElementById('btnSrcBaumer');
     const btnSrcSim = document.getElementById('btnSrcSim');
-    const cameraTitle = document.getElementById('cameraTitle');
 
-    // Telemetry
-    const telemetryFps = document.getElementById('telemetryFps');
-    const telemetryExp = document.getElementById('telemetryExp');
-
-    // Sliders & Controls
+    // Lens & Sensor Tuning Sliders
     const exposureRange = document.getElementById('exposureRange');
     const exposureVal = document.getElementById('exposureVal');
+    const brightnessRange = document.getElementById('brightnessRange');
+    const brightnessVal = document.getElementById('brightnessVal');
+    const contrastRange = document.getElementById('contrastRange');
+    const contrastVal = document.getElementById('contrastVal');
+    const saturationRange = document.getElementById('saturationRange');
+    const saturationVal = document.getElementById('saturationVal');
+    const awbToggle = document.getElementById('awbToggle');
     const confRange = document.getElementById('confRange');
     const confVal = document.getElementById('confVal');
+
+    // Action Buttons
+    const btnResetLens = document.getElementById('btnResetLens');
     const btnSnapshot = document.getElementById('btnSnapshot');
     const btnFullscreen = document.getElementById('btnFullscreen');
-    const liveVideoFeed = document.getElementById('liveVideoFeed');
 
-    // Detected Objects Deck
-    const detectedChipsContainer = document.getElementById('detectedChipsContainer');
+    // Detections & Color Palettes
     const totalObjectsBadge = document.getElementById('totalObjectsBadge');
+    const detectedChipsContainer = document.getElementById('detectedChipsContainer');
+    const colorPaletteGrid = document.getElementById('colorPaletteGrid');
 
-    // Variant Card
-    const variantCard = document.getElementById('variantCard');
-    const variantIcon = document.getElementById('variantIcon');
-    const variantName = document.getElementById('variantName');
-    const variantDesc = document.getElementById('variantDesc');
-    const confFill = document.getElementById('confFill');
-
-    // Color Counters
-    const countOrange = document.getElementById('countOrange');
-    const covOrange = document.getElementById('covOrange');
-    const countViolet = document.getElementById('countViolet');
-    const covViolet = document.getElementById('covViolet');
-    const countGreen = document.getElementById('countGreen');
-    const covGreen = document.getElementById('covGreen');
-
-    let isDraggingExposure = false;
+    let isInteracting = false;
+    let autoWbState = true;
 
     // Clock
     function updateClock() {
@@ -61,17 +58,38 @@ document.addEventListener('DOMContentLoaded', () => {
         const lower = (name || '').toLowerCase();
         if (lower.includes('scissor')) return '✂️';
         if (lower.includes('bottle')) return '🧴';
-        if (lower.includes('cup')) return '☕';
-        if (lower.includes('mouse') || lower.includes('cap')) return '🖱️';
-        if (lower.includes('phone')) return '📱';
-        if (lower.includes('pouch') || lower.includes('milk')) return '🥛';
-        if (lower.includes('knife') || lower.includes('blade')) return '🔪';
+        if (lower.includes('cup') || lower.includes('mug')) return '☕';
+        if (lower.includes('mouse')) return '🖱️';
+        if (lower.includes('phone') || lower.includes('cell')) return '📱';
+        if (lower.includes('knife') || lower.includes('fork') || lower.includes('spoon')) return '🍴';
         if (lower.includes('book')) return '📖';
-        if (lower.includes('box')) return '📦';
+        if (lower.includes('keyboard')) return '⌨️';
+        if (lower.includes('laptop')) return '💻';
+        if (lower.includes('backpack') || lower.includes('bag') || lower.includes('handbag')) return '🎒';
+        if (lower.includes('chair')) return '🪑';
+        if (lower.includes('apple') || lower.includes('banana') || lower.includes('orange')) return '🍎';
+        if (lower.includes('clock') || lower.includes('watch')) return '⏱️';
+        if (lower.includes('remote')) return '🎛️';
         return '🔍';
     }
 
-    // Fetch Live Status
+    // Hex Color Palette for pill tags
+    const COLOR_HEX_MAP = {
+        'RED': '#ef4444',
+        'ORANGE': '#f97316',
+        'YELLOW': '#eab308',
+        'GREEN': '#22c55e',
+        'CYAN': '#06b6d4',
+        'BLUE': '#3b82f6',
+        'PURPLE': '#a855f7',
+        'PINK': '#ec4899',
+        'BROWN': '#854d0e',
+        'BLACK': '#1e293b',
+        'WHITE': '#f8fafc',
+        'GRAY': '#94a3b8'
+    };
+
+    // Fetch Live Status & Update UI
     async function fetchStatus() {
         try {
             const res = await fetch('/api/status');
@@ -79,7 +97,7 @@ document.addEventListener('DOMContentLoaded', () => {
             const data = await res.json();
             updateUI(data);
         } catch (err) {
-            console.error('Error fetching camera telemetry:', err);
+            console.error('Error fetching telemetry:', err);
         }
     }
 
@@ -92,27 +110,48 @@ document.addEventListener('DOMContentLoaded', () => {
             if (data.camera_connected) {
                 camStatusPill.className = 'status-pill';
                 camStatusText.textContent = 'BAUMER GIGE ONLINE (169.254.123.85)';
-                cameraTitle.textContent = 'Overhead Stream: Baumer VCXG.2-32C + YOLOv8 AI';
+                cameraTitle.textContent = 'Overhead Stream: Baumer VCXG.2-32C + YOLOv8 + Lens ISP';
             } else {
                 camStatusPill.className = 'status-pill offline';
                 camStatusText.textContent = 'CONNECTING TO BAUMER...';
-                cameraTitle.textContent = 'Searching for Camera on 169.254.123.85...';
+                cameraTitle.textContent = 'Searching for Baumer Camera on 169.254.123.85...';
             }
         } else {
             btnSrcSim.classList.add('active');
             btnSrcBaumer.classList.remove('active');
             camStatusPill.className = 'status-pill';
-            camStatusText.textContent = 'SIMULATED CONVEYOR FEED';
-            cameraTitle.textContent = 'Simulated Milma Conveyor Stream + YOLOv8 AI';
+            camStatusText.textContent = 'TEST FEED ACTIVE';
+            cameraTitle.textContent = 'Synthetic Color & Pattern Test Stream';
         }
 
         // 2. FPS & Exposure
-        telemetryFps.textContent = `${data.fps.toFixed(1)} FPS`;
-        telemetryExp.textContent = `Exp: ${data.exposure_ms.toFixed(1)} ms`;
+        telemetryFps.textContent = `${(data.fps || 0.0).toFixed(1)} FPS`;
+        telemetryExp.textContent = `Exp: ${(data.exposure_ms || 30.0).toFixed(1)} ms`;
 
-        if (!isDraggingExposure && exposureRange) {
-            exposureRange.value = data.exposure_ms;
-            exposureVal.textContent = Math.round(data.exposure_ms);
+        // Sync slider values when not actively dragging
+        if (!isInteracting) {
+            if (exposureRange) {
+                exposureRange.value = data.exposure_ms;
+                exposureVal.textContent = Math.round(data.exposure_ms);
+            }
+            const lens = data.lens_settings || {};
+            if (brightnessRange && lens.brightness !== undefined) {
+                brightnessRange.value = lens.brightness;
+                brightnessVal.textContent = (lens.brightness >= 0 ? '+' : '') + Math.round(lens.brightness);
+            }
+            if (contrastRange && lens.contrast !== undefined) {
+                contrastRange.value = lens.contrast;
+                contrastVal.textContent = lens.contrast.toFixed(2);
+            }
+            if (saturationRange && lens.saturation !== undefined) {
+                saturationRange.value = lens.saturation;
+                saturationVal.textContent = lens.saturation.toFixed(2);
+            }
+            if (lens.auto_wb !== undefined) {
+                autoWbState = Boolean(lens.auto_wb);
+                awbToggle.textContent = autoWbState ? 'ON' : 'OFF';
+                awbToggle.classList.toggle('active', autoWbState);
+            }
         }
 
         // 3. Detected Objects Deck
@@ -120,87 +159,174 @@ document.addEventListener('DOMContentLoaded', () => {
         totalObjectsBadge.textContent = `${objects.length} Object${objects.length === 1 ? '' : 's'}`;
 
         if (objects.length === 0) {
-            detectedChipsContainer.innerHTML = '<span class="empty-state">No objects currently in camera frame. Place scissors, bottles, cups, or milk pouches in view...</span>';
+            detectedChipsContainer.innerHTML = '<span class="empty-state">No objects currently in camera frame. Place scissors, bottles, cups, phone, mouse, or items in view...</span>';
         } else {
             detectedChipsContainer.innerHTML = objects.map(item => {
                 const icon = getObjectIcon(item.object);
-                const colorStr = item.color || 'NEUTRAL';
-                let tagClass = 'tag-neutral';
-                let chipMilmaClass = '';
-
-                if (colorStr.includes('ORANGE')) {
-                    tagClass = 'tag-orange';
-                    chipMilmaClass = 'milma-chip milma-orange';
-                } else if (colorStr.includes('VIOLET')) {
-                    tagClass = 'tag-violet';
-                    chipMilmaClass = 'milma-chip milma-violet';
-                } else if (colorStr.includes('GREEN')) {
-                    tagClass = 'tag-green';
-                    chipMilmaClass = 'milma-chip milma-green';
-                } else if (colorStr.includes('BLUE')) {
-                    tagClass = 'tag-blue';
-                } else if (colorStr.includes('BLACK')) {
-                    tagClass = 'tag-black';
-                }
+                const colorStr = (item.color || 'UNKNOWN').toUpperCase();
+                const hexColor = item.color_hex || COLOR_HEX_MAP[colorStr] || '#64748b';
+                const isLight = ['WHITE', 'YELLOW', 'CYAN', 'PINK'].includes(colorStr);
+                const textColor = isLight ? '#0f172a' : '#ffffff';
 
                 return `
-                    <div class="object-chip ${chipMilmaClass}">
+                    <div class="object-chip" style="border-left: 3px solid ${hexColor};">
                         <span class="chip-icon">${icon}</span>
                         <span class="chip-obj-name">${item.object}</span>
-                        <span class="chip-color-tag ${tagClass}">${colorStr}</span>
+                        <span class="chip-color-tag" style="background: ${hexColor}; color: ${textColor};">
+                            ${colorStr}
+                        </span>
                         <span class="chip-conf">${item.confidence}%</span>
                     </div>
                 `;
             }).join('');
         }
 
-        // 4. Dominant Detected Variant Card
-        const dom = data.dominant_variant || 'NONE';
-        const conf = data.variant_confidence || 0.0;
+        // 4. Color Palette Breakdown
+        const colorDist = data.color_distribution || {};
+        const colorEntries = Object.entries(colorDist);
 
-        variantCard.className = 'variant-result-card';
-
-        if (dom.includes('ORANGE')) {
-            variantCard.classList.add('orange');
-            variantIcon.textContent = '🟠';
-            variantName.textContent = 'ORANGE (Rich Milk 500ml)';
-            variantDesc.textContent = `High-Fat Milk Variant • Confidence: ${conf.toFixed(1)}%`;
-            confFill.style.width = `${Math.min(100, Math.max(15, conf))}%`;
-            confFill.style.background = 'var(--color-orange)';
-        } else if (dom.includes('VIOLET')) {
-            variantCard.classList.add('violet');
-            variantIcon.textContent = '🟣';
-            variantName.textContent = 'VIOLET (Toned Milk 500ml)';
-            variantDesc.textContent = `Standard Toned Milk • Confidence: ${conf.toFixed(1)}%`;
-            confFill.style.width = `${Math.min(100, Math.max(15, conf))}%`;
-            confFill.style.background = 'var(--color-violet)';
-        } else if (dom.includes('GREEN')) {
-            variantCard.classList.add('green');
-            variantIcon.textContent = '🟢';
-            variantName.textContent = 'GREEN (Smart Milk 500ml)';
-            variantDesc.textContent = `Double Toned Milk • Confidence: ${conf.toFixed(1)}%`;
-            confFill.style.width = `${Math.min(100, Math.max(15, conf))}%`;
-            confFill.style.background = 'var(--color-green)';
+        if (colorEntries.length === 0) {
+            colorPaletteGrid.innerHTML = '<span class="empty-palette">No colored objects detected yet...</span>';
         } else {
-            variantIcon.textContent = '⚪';
-            variantName.textContent = 'NO MILK VARIANT DETECTED';
-            variantDesc.textContent = 'Point camera at Milma milk pouches to detect variant';
-            confFill.style.width = '0%';
+            colorPaletteGrid.innerHTML = colorEntries.map(([colName, count]) => {
+                const hex = COLOR_HEX_MAP[colName] || '#64748b';
+                return `
+                    <div class="palette-chip">
+                        <span class="palette-swatch" style="background: ${hex}; box-shadow: 0 0 8px ${hex}88;"></span>
+                        <span class="palette-label">${colName}</span>
+                        <span class="palette-count">${count}</span>
+                    </div>
+                `;
+            }).join('');
         }
-
-        // 5. Color Counters & Coverage
-        const counts = data.color_counts || {};
-        const coverage = data.color_coverage || {};
-
-        countOrange.textContent = counts.orange || 0;
-        covOrange.textContent = `${(coverage.orange || 0).toFixed(1)}% cov`;
-
-        countViolet.textContent = counts.violet || 0;
-        covViolet.textContent = `${(coverage.violet || 0).toFixed(1)}% cov`;
-
-        countGreen.textContent = counts.green || 0;
-        covGreen.textContent = `${(coverage.green || 0).toFixed(1)}% cov`;
     }
+
+    // =========================================================================
+    // LENS & SENSOR CONTROLS (Live Tuning)
+    // =========================================================================
+    async function updateLensSettings(patch) {
+        try {
+            await fetch('/api/set_lens', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(patch)
+            });
+        } catch (e) {
+            console.error('Error updating lens settings:', e);
+        }
+    }
+
+    // Exposure Slider
+    exposureRange.addEventListener('input', (e) => {
+        isInteracting = true;
+        exposureVal.textContent = e.target.value;
+    });
+
+    exposureRange.addEventListener('change', async (e) => {
+        isInteracting = false;
+        await fetch('/api/set_exposure', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ exposure_ms: parseFloat(e.target.value) })
+        });
+        fetchStatus();
+    });
+
+    // Brightness Slider
+    brightnessRange.addEventListener('input', (e) => {
+        isInteracting = true;
+        const val = parseInt(e.target.value);
+        brightnessVal.textContent = (val >= 0 ? '+' : '') + val;
+    });
+
+    brightnessRange.addEventListener('change', async (e) => {
+        isInteracting = false;
+        await updateLensSettings({ brightness: parseFloat(e.target.value) });
+        fetchStatus();
+    });
+
+    // Contrast Slider
+    contrastRange.addEventListener('input', (e) => {
+        isInteracting = true;
+        contrastVal.textContent = parseFloat(e.target.value).toFixed(2);
+    });
+
+    contrastRange.addEventListener('change', async (e) => {
+        isInteracting = false;
+        await updateLensSettings({ contrast: parseFloat(e.target.value) });
+        fetchStatus();
+    });
+
+    // Saturation Slider
+    saturationRange.addEventListener('input', (e) => {
+        isInteracting = true;
+        saturationVal.textContent = parseFloat(e.target.value).toFixed(2);
+    });
+
+    saturationRange.addEventListener('change', async (e) => {
+        isInteracting = false;
+        await updateLensSettings({ saturation: parseFloat(e.target.value) });
+        fetchStatus();
+    });
+
+    // Auto White Balance Toggle
+    awbToggle.addEventListener('click', async () => {
+        autoWbState = !autoWbState;
+        awbToggle.textContent = autoWbState ? 'ON' : 'OFF';
+        awbToggle.classList.toggle('active', autoWbState);
+        await updateLensSettings({ auto_wb: autoWbState });
+        fetchStatus();
+    });
+
+    // YOLO Confidence Threshold
+    confRange.addEventListener('input', (e) => {
+        confVal.textContent = e.target.value;
+    });
+
+    confRange.addEventListener('change', async (e) => {
+        await fetch('/api/set_confidence', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ confidence: parseFloat(e.target.value) / 100.0 })
+        });
+        fetchStatus();
+    });
+
+    // Reset Lens Settings to Factory Defaults
+    btnResetLens.addEventListener('click', async () => {
+        exposureRange.value = 30;
+        exposureVal.textContent = '30';
+        brightnessRange.value = 5;
+        brightnessVal.textContent = '+5';
+        contrastRange.value = 1.18;
+        contrastVal.textContent = '1.18';
+        saturationRange.value = 1.35;
+        saturationVal.textContent = '1.35';
+        confRange.value = 20;
+        confVal.textContent = '20';
+        autoWbState = true;
+        awbToggle.textContent = 'ON';
+        awbToggle.classList.add('active');
+
+        await fetch('/api/set_exposure', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ exposure_ms: 30.0 })
+        });
+        await updateLensSettings({
+            brightness: 5,
+            contrast: 1.18,
+            saturation: 1.35,
+            gamma: 0.85,
+            auto_wb: true
+        });
+        await fetch('/api/set_confidence', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ confidence: 0.20 })
+        });
+        fetchStatus();
+    });
 
     // Source Toggle
     btnSrcBaumer.addEventListener('click', async () => {
@@ -221,70 +347,42 @@ document.addEventListener('DOMContentLoaded', () => {
         fetchStatus();
     });
 
-    // Exposure Slider
-    exposureRange.addEventListener('input', (e) => {
-        isDraggingExposure = true;
-        exposureVal.textContent = e.target.value;
-    });
-
-    exposureRange.addEventListener('change', async (e) => {
-        isDraggingExposure = false;
-        await fetch('/api/set_exposure', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ exposure_ms: parseFloat(e.target.value) })
-        });
-        fetchStatus();
-    });
-
-    // Confidence Slider
-    confRange.addEventListener('input', (e) => {
-        confVal.textContent = e.target.value;
-    });
-
-    confRange.addEventListener('change', async (e) => {
-        await fetch('/api/set_confidence', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ confidence: parseFloat(e.target.value) / 100.0 })
-        });
-        fetchStatus();
-    });
-
-    // Resilient Video Stream Management
+    // =========================================================================
+    // RESILIENT VIDEO STREAMING
+    // =========================================================================
     let framePollInterval = null;
 
     function startFramePollingFallback() {
         if (framePollInterval) return;
-        console.warn("Switching to fast frame polling fallback (/api/frame)...");
+        console.warn("Activating fast frame fallback polling (/api/frame)...");
         framePollInterval = setInterval(() => {
             const nextImg = new Image();
             nextImg.onload = () => {
                 liveVideoFeed.src = nextImg.src;
             };
             nextImg.src = `/api/frame?t=${Date.now()}`;
-        }, 200);
+        }, 180);
     }
 
     liveVideoFeed.onerror = () => {
-        console.warn("Video feed stream error detected. Initiating recovery...");
+        console.warn("Video feed error detected. Attempting reload...");
         setTimeout(() => {
             liveVideoFeed.src = `/video_feed?t=${Date.now()}`;
-        }, 1500);
+        }, 1200);
     };
 
-    // If stream has not rendered any pixels after 3 seconds, activate fast frame fallback
+    // If stream has no dimensions after 2.5s, trigger frame polling fallback
     setTimeout(() => {
         if (!liveVideoFeed.naturalWidth || liveVideoFeed.naturalWidth === 0) {
             startFramePollingFallback();
         }
-    }, 3000);
+    }, 2500);
 
     // Snapshot Download
     btnSnapshot.addEventListener('click', () => {
         const a = document.createElement('a');
         a.href = `/api/frame?t=${Date.now()}`;
-        a.download = `milma_yolo_capture_${Date.now()}.jpg`;
+        a.download = `vision_ai_lens_capture_${Date.now()}.jpg`;
         document.body.appendChild(a);
         a.click();
         document.body.removeChild(a);
@@ -294,14 +392,14 @@ document.addEventListener('DOMContentLoaded', () => {
     btnFullscreen.addEventListener('click', () => {
         if (!document.fullscreenElement) {
             liveVideoFeed.requestFullscreen().catch(err => {
-                alert(`Error attempting to enable fullscreen: ${err.message}`);
+                alert(`Fullscreen error: ${err.message}`);
             });
         } else {
             document.exitFullscreen();
         }
     });
 
-    // Sequential Telemetry Polling (Prevents connection backlog)
+    // Sequential Polling Loop
     let isFetching = false;
     async function pollTelemetryLoop() {
         if (!isFetching) {
@@ -312,7 +410,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 isFetching = false;
             }
         }
-        setTimeout(pollTelemetryLoop, 400);
+        setTimeout(pollTelemetryLoop, 350);
     }
 
     pollTelemetryLoop();

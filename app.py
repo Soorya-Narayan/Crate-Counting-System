@@ -1,155 +1,211 @@
+#!/usr/bin/env python3
 """
-Milma Kottayam Dairy - Live Camera, YOLO Object Detection & Color Classifier
-===========================================================================
-Company: Goose Industrial Solutions
-Client: Milma (E.R.C.M.P.U. Ltd.), Kottayam Dairy Plant
-
-Features:
-- Real-time Baumer VCXG.2-32C GigE camera streaming with hardware AWB.
-- YOLOv8 Object Detection (detects scissors, bottles, cups, pouches, caps, phones, etc.).
-- Multi-Spectral Color Classifier on each detected object:
-    - ORANGE -> Milma Rich Milk (500ml)
-    - VIOLET -> Milma Toned Milk (500ml)
-    - GREEN  -> Milma Smart Milk (500ml)
-    - BLUE, YELLOW, RED, BLACK, WHITE
-- Real-time color-coded bounding boxes and HUD labels.
+Goose Industrial Solutions - Vision AI Object & Color Classifier
+Milma Kottayam Dairy Project
+Baumer GigE Machine Vision Camera + Ultralytics YOLOv8 + Lens ISP Pipeline
 """
 
 import os
+import sys
 import time
-import socket
-import struct
+import json
+import logging
 import threading
-from typing import Dict, Any, List, Tuple
+from typing import Dict, Any, List, Tuple, Optional
 
-from flask import Flask, render_template, Response, jsonify, request
 import cv2
 import numpy as np
+from flask import Flask, render_template, Response, jsonify, request
 from ultralytics import YOLO
 
 from baumer_camera import BaumerCamera
-from milma_counter import generate_synthetic_milma_crate, PouchVariant
+
+# Configure logging
+logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
+logger = logging.getLogger("MilmaVision")
 
 app = Flask(__name__)
 
-# Load YOLO model
+# ==============================================================================
+# GLOBAL CONFIGURATION & TUNING PARAMETERS
+# ==============================================================================
+# YOLO Model
 print("Loading YOLOv8 object detection model...")
 yolo_model = YOLO("yolov8n.pt")
 print("✓ YOLOv8 model ready.")
 
-# Global Application State
-camera_source = "baumer"       # Real Baumer camera by default
-baumer_cam = None
-baumer_connected = False
-baumer_exposure_ms = 30.0
-confidence_cutoff = 0.18
+# Detection cutoff
+confidence_cutoff = 0.20
 
-latest_jpeg_frame = None
+# Hardware Camera & Lens ISP Settings
+baumer_cam: Optional[BaumerCamera] = None
+baumer_connected = False
+camera_source = "baumer"  # 'baumer' or 'simulated'
+baumer_exposure_ms = 30.0
+
+# Live Lens ISP Adjustments
+lens_settings = {
+    "brightness": 5,        # -50 to +50
+    "contrast": 1.18,       # 0.5 to 2.0
+    "saturation": 1.35,     # 0.5 to 2.5
+    "gamma": 0.85,          # 0.5 to 1.5
+    "auto_wb": True         # Auto white balance (Gray World)
+}
+
+# Stream Frame & Telemetry State
+latest_jpeg_frame: Optional[bytes] = None
 latest_telemetry: Dict[str, Any] = {
     "camera_source": "baumer",
     "camera_connected": False,
     "fps": 0.0,
     "exposure_ms": 30.0,
-    "dominant_variant": "NONE",
-    "variant_confidence": 0.0,
-    "color_counts": {"orange": 0, "violet": 0, "green": 0},
-    "color_coverage": {"orange": 0.0, "violet": 0.0, "green": 0.0},
+    "lens_settings": lens_settings,
     "detected_objects": [],
+    "color_distribution": {},
     "total_detections": 0
 }
+
 frame_cond = threading.Condition()
 latest_frame_id = 0
 
-# Milma Variant Color Ranges (HSV)
-MILMA_COLORS = {
-    "orange": {
-        "name": "ORANGE (Rich Milk)",
-        "bgr": (0, 140, 255),
-        "lower": np.array([6, 120, 70]),
-        "upper": np.array([21, 255, 255])
-    },
-    "violet": {
-        "name": "VIOLET (Toned Milk)",
-        "bgr": (210, 60, 180),
-        "lower": np.array([125, 75, 55]),
-        "upper": np.array([160, 255, 255])
-    },
-    "green": {
-        "name": "GREEN (Smart Milk)",
-        "bgr": (50, 210, 50),
-        "lower": np.array([38, 75, 55]),
-        "upper": np.array([85, 255, 255])
-    }
+# ==============================================================================
+# LENS ISP COLOR ENHANCEMENT ENGINE
+# ==============================================================================
+def enhance_lens_frame(frame: np.ndarray) -> np.ndarray:
+    """
+    Transforms linear raw sensor output into a vibrant, color-accurate image.
+    Applies Auto White Balance, Gamma correction, Brightness/Contrast, and Saturation boost.
+    """
+    if frame is None or frame.size == 0:
+        return frame
+
+    # 1. White Balance (Gray World Color Constancy)
+    scale_b, scale_g, scale_r = 1.0, 1.0, 1.0
+    if lens_settings.get("auto_wb", True):
+        b, g, r = cv2.split(frame)
+        m_b, m_g, m_r = float(np.mean(b)), float(np.mean(g)), float(np.mean(r))
+        m_gray = (m_b + m_g + m_r) / 3.0
+        scale_b = float(np.clip(m_gray / (m_b + 1e-5), 0.75, 1.40))
+        scale_g = float(np.clip(m_gray / (m_g + 1e-5), 0.75, 1.40))
+        scale_r = float(np.clip(m_gray / (m_r + 1e-5), 0.75, 1.40))
+
+    # 2. Build 3-channel LUT for Gamma + Contrast + Brightness + Channel Scales
+    gamma = max(0.4, min(2.0, float(lens_settings.get("gamma", 0.85))))
+    inv_gamma = 1.0 / gamma
+    contrast = max(0.5, min(2.0, float(lens_settings.get("contrast", 1.18))))
+    brightness = float(lens_settings.get("brightness", 5))
+
+    lut = np.zeros((256, 1, 3), dtype=np.uint8)
+    for i in range(256):
+        v = ((i / 255.0) ** inv_gamma) * 255.0
+        v = (v - 128.0) * contrast + 128.0 + brightness
+        lut[i, 0, 0] = np.clip(v * scale_b, 0, 255)  # Blue
+        lut[i, 0, 1] = np.clip(v * scale_g, 0, 255)  # Green
+        lut[i, 0, 2] = np.clip(v * scale_r, 0, 255)  # Red
+
+    enhanced = np.empty_like(frame)
+    enhanced[:, :, 0] = cv2.LUT(frame[:, :, 0], lut[:, 0, 0])
+    enhanced[:, :, 1] = cv2.LUT(frame[:, :, 1], lut[:, 0, 1])
+    enhanced[:, :, 2] = cv2.LUT(frame[:, :, 2], lut[:, 0, 2])
+
+    # 3. Saturation / Vibrancy in HSV space
+    sat_scale = max(0.5, min(2.5, float(lens_settings.get("saturation", 1.35))))
+    if abs(sat_scale - 1.0) > 0.05:
+        hsv = cv2.cvtColor(enhanced, cv2.COLOR_BGR2HSV).astype(np.float32)
+        hsv[:, :, 1] = np.clip(hsv[:, :, 1] * sat_scale, 0, 255)
+        enhanced = cv2.cvtColor(hsv.astype(np.uint8), cv2.COLOR_HSV2BGR)
+
+    return enhanced
+
+
+# ==============================================================================
+# MULTI-SPECTRAL COLOR CLASSIFIER
+# ==============================================================================
+COLOR_PALETTE = {
+    "RED": {"bgr": (30, 30, 235), "hex": "#ef4444"},
+    "ORANGE": {"bgr": (0, 135, 245), "hex": "#f97316"},
+    "YELLOW": {"bgr": (0, 215, 245), "hex": "#eab308"},
+    "GREEN": {"bgr": (40, 205, 50), "hex": "#22c55e"},
+    "CYAN": {"bgr": (220, 190, 0), "hex": "#06b6d4"},
+    "BLUE": {"bgr": (240, 110, 20), "hex": "#3b82f6"},
+    "PURPLE": {"bgr": (210, 60, 175), "hex": "#a855f7"},
+    "PINK": {"bgr": (190, 90, 240), "hex": "#ec4899"},
+    "BROWN": {"bgr": (25, 75, 140), "hex": "#854d0e"},
+    "BLACK": {"bgr": (35, 35, 35), "hex": "#1e293b"},
+    "WHITE": {"bgr": (240, 240, 240), "hex": "#f8fafc"},
+    "GRAY": {"bgr": (140, 140, 140), "hex": "#94a3b8"}
 }
 
 
-def classify_crop_color(roi_bgr: np.ndarray) -> Tuple[str, Tuple[int, int, int], str]:
+def classify_roi_color(roi_bgr: np.ndarray) -> Tuple[str, Tuple[int, int, int], str]:
     """
-    Classifies the dominant color of an object crop.
-    Returns: (Color Name, BGR tuple for drawing, Milma Variant Tag or 'standard')
+    Classifies the dominant physical color of an object bounding box ROI.
+    Returns: (Color Name, BGR Tuple, Hex Code)
     """
-    if roi_bgr.size == 0 or roi_bgr.shape[0] < 4 or roi_bgr.shape[1] < 4:
-        return "UNKNOWN", (128, 128, 128), "none"
+    if roi_bgr is None or roi_bgr.size == 0 or roi_bgr.shape[0] < 4 or roi_bgr.shape[1] < 4:
+        return "UNKNOWN", (128, 128, 128), "#64748b"
 
-    # Analyze inner 75% of ROI to minimize background interference
+    # Analyze inner core (70%) to avoid background edge bleed
     rh, rw = roi_bgr.shape[:2]
-    cy, cx = rh // 2, rw // 2
-    dh, dw = int(rh * 0.38), int(rw * 0.38)
-    inner = roi_bgr[max(0, cy - dh):min(rh, cy + dh), max(0, cx - dw):min(rw, cx + dw)]
-    if inner.size == 0:
-        inner = roi_bgr
+    ch_start, ch_end = int(rh * 0.15), int(rh * 0.85)
+    cw_start, cw_end = int(rw * 0.15), int(rw * 0.85)
+    core = roi_bgr[ch_start:ch_end, cw_start:cw_end]
+    if core.size == 0:
+        core = roi_bgr
 
-    hsv = cv2.cvtColor(inner, cv2.COLOR_BGR2HSV)
-    val = hsv[:, :, 2]
-    sat = hsv[:, :, 1]
-    
-    # 1. Check for neutral colors (Black / White / Gray)
-    med_val = np.median(val)
-    med_sat = np.median(sat)
-    
-    if med_val < 42:
-        return "BLACK", (40, 40, 40), "black"
-    if med_sat < 25 and med_val > 175:
-        return "WHITE / SILVER", (230, 230, 230), "white"
-    if med_sat < 35:
-        return "GRAY / NEUTRAL", (140, 140, 140), "gray"
+    hsv = cv2.cvtColor(core, cv2.COLOR_BGR2HSV)
+    h_chan = hsv[:, :, 0]
+    s_chan = hsv[:, :, 1]
+    v_chan = hsv[:, :, 2]
 
-    # 2. Check for Milma-specific saturated colors first
-    for var_key, spec in MILMA_COLORS.items():
-        mask = cv2.inRange(hsv, spec["lower"], spec["upper"])
-        if np.count_nonzero(mask) > (inner.shape[0] * inner.shape[1] * 0.12):
-            return spec["name"], spec["bgr"], var_key
+    med_v = float(np.median(v_chan))
+    med_s = float(np.median(s_chan))
+    med_h = float(np.median(h_chan))
 
-    # 3. Saturated pixels general hue spectrum
-    sat_mask = (sat > 40) & (val > 40)
-    if np.count_nonzero(sat_mask) < 20:
-        return "NEUTRAL", (130, 130, 130), "neutral"
-
-    hues = hsv[:, :, 0][sat_mask]
-    med_hue = int(np.median(hues))
-
-    if 5 <= med_hue <= 22 or med_hue >= 172:
-        return "ORANGE (Rich Milk)", (0, 140, 255), "orange"
-    elif 23 <= med_hue <= 35:
-        return "YELLOW", (0, 220, 255), "yellow"
-    elif 36 <= med_hue <= 85:
-        return "GREEN (Smart Milk)", (50, 210, 50), "green"
-    elif 86 <= med_hue <= 124:
-        return "BLUE", (240, 110, 10), "blue"
-    elif 125 <= med_hue <= 165:
-        return "VIOLET (Toned Milk)", (210, 60, 180), "violet"
+    # 1. Achromatic checks (Black / White / Gray)
+    if med_v < 46 or (med_v < 60 and med_s < 45):
+        c = "BLACK"
+    elif med_s < 30 and med_v > 165:
+        c = "WHITE"
+    elif med_s < 42 and 46 <= med_v <= 165:
+        c = "GRAY"
+    # 2. Brown check
+    elif 8 <= med_h < 25 and med_s >= 40 and 45 <= med_v < 125:
+        c = "BROWN"
+    # 3. Chromatic Hues
+    elif med_h < 8 or med_h >= 168:
+        c = "RED"
+    elif 8 <= med_h < 24:
+        c = "ORANGE"
+    elif 24 <= med_h < 36:
+        c = "YELLOW"
+    elif 36 <= med_h < 85:
+        c = "GREEN"
+    elif 85 <= med_h < 102:
+        c = "CYAN"
+    elif 102 <= med_h < 135:
+        c = "BLUE"
+    elif 135 <= med_h < 155:
+        c = "PURPLE"
+    elif 155 <= med_h < 168:
+        c = "PINK"
     else:
-        return "RED", (0, 0, 240), "red"
+        c = "GRAY"
+
+    meta = COLOR_PALETTE.get(c, {"bgr": (128, 128, 128), "hex": "#64748b"})
+    return c, meta["bgr"], meta["hex"]
 
 
-def process_yolo_and_colors(frame: np.ndarray) -> Tuple[np.ndarray, Dict[str, Any]]:
-    """Runs YOLO object detection and color classification on every detected object."""
+# ==============================================================================
+# YOLO OBJECT DETECTION & COLOR ANNOTATION
+# ==============================================================================
+def process_frame_detections(frame: np.ndarray) -> Tuple[np.ndarray, Dict[str, Any]]:
+    """Runs YOLO object detection on the enhanced frame and classifies object colors."""
     h, w = frame.shape[:2]
     annotated = frame.copy()
-    total_pixels = float(h * w)
 
-    # 1. Run YOLO object detection
-    yolo_res = yolo_model.predict(
+    # Run YOLOv8 inference
+    results = yolo_model.predict(
         frame,
         imgsz=640,
         conf=confidence_cutoff,
@@ -157,168 +213,83 @@ def process_yolo_and_colors(frame: np.ndarray) -> Tuple[np.ndarray, Dict[str, An
     )[0]
 
     detected_items = []
-    milma_counts = {"orange": 0, "violet": 0, "green": 0}
-    milma_coverage = {"orange": 0.0, "violet": 0.0, "green": 0.0}
+    color_dist: Dict[str, int] = {}
 
-    # Track YOLO bounding boxes
-    yolo_boxes = []
-    if yolo_res.boxes is not None:
-        for b in yolo_res.boxes:
-            coords = [int(v) for v in b.xyxy[0]]
+    if results.boxes is not None:
+        for b in results.boxes:
+            x1, y1, x2, y2 = [int(v) for v in b.xyxy[0]]
             cls_id = int(b.cls[0])
-            cls_name = yolo_model.names[cls_id]
+            obj_name = yolo_model.names[cls_id]
             conf = float(b.conf[0])
-            yolo_boxes.append((coords, cls_name, conf))
 
-    # 2. Also run contour color search for Milma pouches (Green, Orange, Violet)
-    hsv_full = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
-    min_patch_area = max(3500, int(total_pixels * 0.005))
-
-    color_regions = []
-    for var_key, spec in MILMA_COLORS.items():
-        mask = cv2.inRange(hsv_full, spec["lower"], spec["upper"])
-        cov = (np.count_nonzero(mask) / total_pixels) * 100.0
-        milma_coverage[var_key] = round(cov, 2)
-
-        kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (5, 5))
-        cleaned = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel)
-        cnts, _ = cv2.findContours(cleaned, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-
-        for c in cnts:
-            area = cv2.contourArea(c)
-            if area > min_patch_area:
-                x, y, bw, bh = cv2.boundingRect(c)
-                if bw < w * 0.92 and bh < h * 0.92:
-                    color_regions.append({
-                        "bbox": (x, y, x + bw, y + bh),
-                        "color_name": spec["name"],
-                        "bgr": spec["bgr"],
-                        "var_key": var_key,
-                        "area": area
-                    })
-
-    # 3. Fuse YOLO detections with color classification
-    handled_yolo_indices = set()
-
-    # Match color regions with overlapping YOLO objects
-    for cr in color_regions:
-        cx1, cy1, cx2, cy2 = cr["bbox"]
-        matched_obj = "milk pouch"
-        matched_conf = 0.95
-
-        for y_idx, (y_box, y_name, y_conf) in enumerate(yolo_boxes):
-            if y_idx in handled_yolo_indices:
+            # Clamp bounding box
+            x1, y1 = max(0, x1), max(0, y1)
+            x2, y2 = min(w, x2), min(h, y2)
+            if x2 <= x1 or y2 <= y1:
                 continue
-            yx1, yy1, yx2, yy2 = y_box
-            # Compute intersection
-            ix1, iy1 = max(cx1, yx1), max(cy1, yy1)
-            ix2, iy2 = min(cx2, yx2), min(cy2, yy2)
-            if ix1 < ix2 and iy1 < iy2:
-                # Intersecting
-                matched_obj = y_name
-                matched_conf = y_conf
-                handled_yolo_indices.add(y_idx)
-                break
 
-        var_key = cr["var_key"]
-        milma_counts[var_key] += 1
+            # Crop object and classify its color
+            crop = frame[y1:y2, x1:x2]
+            color_name, bgr_color, hex_color = classify_roi_color(crop)
 
-        detected_items.append({
-            "object": matched_obj,
-            "color": cr["color_name"],
-            "bgr": cr["bgr"],
-            "bbox": (cx1, cy1, cx2, cy2),
-            "conf": matched_conf,
-            "is_milma": True
-        })
+            color_dist[color_name] = color_dist.get(color_name, 0) + 1
 
-    # Add remaining YOLO objects that didn't match a Milma pouch color (e.g. black cap, blue phone)
-    for y_idx, (y_box, y_name, y_conf) in enumerate(yolo_boxes):
-        if y_idx in handled_yolo_indices:
-            continue
-        yx1, yy1, yx2, yy2 = y_box
-        crop = frame[max(0, yy1):min(h, yy2), max(0, yx1):min(w, yx2)]
-        color_name, bgr_col, var_tag = classify_crop_color(crop)
+            detected_items.append({
+                "object": obj_name,
+                "color": color_name,
+                "color_hex": hex_color,
+                "bgr": bgr_color,
+                "confidence": round(conf * 100.0, 1),
+                "bbox": [x1, y1, x2, y2]
+            })
 
-        if var_tag in milma_counts:
-            milma_counts[var_tag] += 1
+            # Draw visual annotation
+            cv2.rectangle(annotated, (x1, y1), (x2, y2), bgr_color, 2)
 
-        detected_items.append({
-            "object": y_name,
-            "color": color_name,
-            "bgr": bgr_col,
-            "bbox": (yx1, yy1, yx2, yy2),
-            "conf": y_conf,
-            "is_milma": (var_tag in ["orange", "violet", "green"])
-        })
+            label = f"{obj_name.upper()} • {color_name} ({int(conf * 100)}%)"
+            font = cv2.FONT_HERSHEY_SIMPLEX
+            font_scale = 0.55 if w < 1200 else 0.70
+            thickness = 1 if w < 1200 else 2
+            (lw, lh), _ = cv2.getTextSize(label, font, font_scale, thickness)
 
-    # 4. Draw annotated bounding boxes and labels
-    for idx, item in enumerate(detected_items, 1):
-        x1, y1, x2, y2 = item["bbox"]
-        color = item["bgr"]
-        obj = item["object"]
-        cname = item["color"]
-        label = f"{obj.upper()}: {cname} ({int(item['conf']*100)}%)"
+            # Badge background
+            badge_y1 = max(0, y1 - lh - 8)
+            badge_y2 = max(lh + 8, y1)
+            cv2.rectangle(annotated, (x1, badge_y1), (x1 + lw + 12, badge_y2), bgr_color, -1)
 
-        # Bounding box
-        cv2.rectangle(annotated, (x1, y1), (x2, y2), color, 2)
+            # Text color (contrast-aware)
+            text_color = (0, 0, 0) if color_name in ["WHITE", "YELLOW", "CYAN", "PINK"] else (255, 255, 255)
+            cv2.putText(annotated, label, (x1 + 6, max(lh + 2, y1 - 3)), font, font_scale, text_color, thickness, cv2.LINE_AA)
 
-        # Label badge
-        font = cv2.FONT_HERSHEY_SIMPLEX
-        font_scale = 0.6 if w < 1200 else 0.75
-        thickness = 1 if w < 1200 else 2
-        (lw, lh), _ = cv2.getTextSize(label, font, font_scale, thickness)
-
-        cv2.rectangle(annotated, (x1, max(0, y1 - lh - 10)), (x1 + lw + 12, max(lh + 10, y1)), color, -1)
-        # Choose text color (white for dark backgrounds, dark for white/yellow)
-        text_color = (0, 0, 0) if cname in ["WHITE / SILVER", "YELLOW"] else (255, 255, 255)
-        cv2.putText(annotated, label, (x1 + 6, max(lh, y1 - 4)), font, font_scale, text_color, thickness, cv2.LINE_AA)
-
-    # 5. Overlaid HUD Bar
-    hud_h = 56 if h < 1000 else 70
-    cv2.rectangle(annotated, (0, 0), (w, hud_h), (18, 18, 22), -1)
-    cv2.line(annotated, (0, hud_h), (w, hud_h), (60, 60, 70), 2)
-
-    # Determine dominant Milma variant
-    dominant = "NONE"
-    dom_conf = 0.0
-    ranked = sorted(milma_counts.items(), key=lambda x: x[1], reverse=True)
-    if ranked[0][1] > 0:
-        top_k = ranked[0][0]
-        dominant = MILMA_COLORS[top_k]["name"]
-        dom_conf = 95.0
-    elif max(milma_coverage.values()) > 0.4:
-        top_cov = max(milma_coverage.items(), key=lambda x: x[1])
-        dominant = MILMA_COLORS[top_cov[0]]["name"]
-        dom_conf = 85.0
+    # Top HUD Bar
+    hud_h = 50 if h < 1000 else 64
+    cv2.rectangle(annotated, (0, 0), (w, hud_h), (16, 18, 22), -1)
+    cv2.line(annotated, (0, hud_h), (w, hud_h), (50, 55, 65), 1)
 
     hud_font = cv2.FONT_HERSHEY_SIMPLEX
-    hud_scale = 0.65 if w < 1200 else 0.85
-    hud_color = (50, 210, 50) if "GREEN" in dominant else ((0, 140, 255) if "ORANGE" in dominant else ((210, 60, 180) if "VIOLET" in dominant else (140, 140, 140)))
-    
-    cv2.putText(annotated, f"MILMA VARIANT: {dominant}", (20, int(hud_h * 0.65)),
-                hud_font, hud_scale, hud_color, 2, cv2.LINE_AA)
+    hud_scale = 0.6 if w < 1200 else 0.75
+    cv2.putText(annotated, "VISION AI • OBJECT & COLOR DETECTOR", (18, int(hud_h * 0.65)),
+                hud_font, hud_scale, (0, 210, 255), 2, cv2.LINE_AA)
 
-    # Summary of detections in top right
-    summary = f"Detected: {len(detected_items)} objects | Green: {milma_counts['green']} | Orange: {milma_counts['orange']} | Violet: {milma_counts['violet']}"
-    (sw, sh), _ = cv2.getTextSize(summary, hud_font, hud_scale * 0.8, 1)
-    cv2.putText(annotated, summary, (w - sw - 20, int(hud_h * 0.65)),
-                hud_font, hud_scale * 0.8, (220, 220, 220), 1, cv2.LINE_AA)
+    # Tally in HUD
+    tally_items = [f"{k}: {v}" for k, v in sorted(color_dist.items())]
+    tally_str = f"Objects: {len(detected_items)}" + (f" | {' • '.join(tally_items)}" if tally_items else " | Scanning...")
+    (tw, th), _ = cv2.getTextSize(tally_str, hud_font, hud_scale * 0.75, 1)
+    cv2.putText(annotated, tally_str, (w - tw - 18, int(hud_h * 0.65)),
+                hud_font, hud_scale * 0.75, (220, 220, 220), 1, cv2.LINE_AA)
 
     telemetry = {
-        "dominant_variant": dominant,
-        "variant_confidence": dom_conf,
-        "color_counts": milma_counts,
-        "color_coverage": milma_coverage,
         "detected_objects": [
             {
                 "object": it["object"],
                 "color": it["color"],
-                "confidence": round(it["conf"] * 100.0, 1),
-                "is_milma": it["is_milma"]
+                "color_hex": it["color_hex"],
+                "confidence": it["confidence"],
+                "bbox": it["bbox"]
             }
             for it in detected_items
         ],
+        "color_distribution": color_dist,
         "total_detections": len(detected_items)
     }
 
@@ -329,16 +300,12 @@ def process_yolo_and_colors(frame: np.ndarray) -> Tuple[np.ndarray, Dict[str, An
 # BACKGROUND VIDEO CAPTURE WORKER
 # ==============================================================================
 def video_capture_worker():
-    """Continuously fetches frames, runs YOLO + Color classification, and feeds stream."""
+    """Continuously fetches frames, enhances lens colors, runs YOLO detection, and feeds stream."""
     global baumer_cam, baumer_connected, camera_source, latest_jpeg_frame, latest_telemetry, latest_frame_id
 
     fps_count = 0
     fps_timer = time.time()
     current_fps = 0.0
-
-    sim_variants = [PouchVariant.ORANGE, PouchVariant.VIOLET, PouchVariant.GREEN]
-    sim_idx = 0
-    sim_counter = 0
 
     while True:
         frame = None
@@ -355,19 +322,20 @@ def video_capture_worker():
                     baumer_connected = True
                     print("✓ Baumer camera online and streaming.")
                 except Exception as e:
-                    print(f"Baumer connection note: {e}")
+                    logger.warning(f"Baumer connection: {e}")
                     baumer_connected = False
                     time.sleep(2.0)
                     continue
 
-            # Fetch frame from Baumer camera
+            # Fetch raw frame from Baumer camera
             raw_frame, info = baumer_cam.get_frame(timeout=0.6)
             if raw_frame is not None:
-                frame = raw_frame
+                # Run Lens Color Enhancement (White Balance + Tone Mapping + Vibrancy)
+                frame = enhance_lens_frame(raw_frame)
             else:
                 time.sleep(0.01)
         else:
-            # Simulated fallback
+            # Simulated Feed fallback
             if baumer_cam is not None:
                 try:
                     baumer_cam.stop_stream()
@@ -377,11 +345,13 @@ def video_capture_worker():
                 baumer_cam = None
                 baumer_connected = False
 
-            sim_counter += 1
-            if sim_counter % 35 == 0:
-                sim_idx = (sim_idx + 1) % len(sim_variants)
-            frame = generate_synthetic_milma_crate(variant=sim_variants[sim_idx], num_pouches=20)
-            time.sleep(0.06)
+            # Synthetic colorful test frame
+            sim_frame = np.full((720, 1280, 3), (25, 28, 34), dtype=np.uint8)
+            cv2.circle(sim_frame, (320, 360), 90, (240, 60, 40), -1)   # Blue
+            cv2.rectangle(sim_frame, (520, 270), (700, 450), (40, 205, 50), -1) # Green
+            cv2.circle(sim_frame, (900, 360), 90, (30, 30, 235), -1)   # Red
+            frame = sim_frame
+            time.sleep(0.05)
 
         if frame is not None:
             # FPS Calculation
@@ -392,10 +362,10 @@ def video_capture_worker():
                 fps_count = 0
                 fps_timer = now
 
-            # Run YOLO + Color Detection
-            annotated_frame, telemetry = process_yolo_and_colors(frame)
+            # Run Object Detection & Color Classification
+            annotated_frame, telemetry = process_frame_detections(frame)
 
-            # Downsample for web stream responsiveness if high res
+            # Downsample for responsive web streaming if very high res
             h, w = annotated_frame.shape[:2]
             if w > 1280:
                 scale = 1280.0 / w
@@ -403,7 +373,7 @@ def video_capture_worker():
             else:
                 stream_frame = annotated_frame
 
-            ret, jpeg = cv2.imencode('.jpg', stream_frame, [cv2.IMWRITE_JPEG_QUALITY, 80])
+            ret, jpeg = cv2.imencode('.jpg', stream_frame, [cv2.IMWRITE_JPEG_QUALITY, 85])
             if ret:
                 with frame_cond:
                     latest_jpeg_frame = jpeg.tobytes()
@@ -413,11 +383,9 @@ def video_capture_worker():
                         "camera_connected": baumer_connected,
                         "fps": current_fps,
                         "exposure_ms": baumer_exposure_ms,
-                        "dominant_variant": telemetry["dominant_variant"],
-                        "variant_confidence": telemetry["variant_confidence"],
-                        "color_counts": telemetry["color_counts"],
-                        "color_coverage": telemetry["color_coverage"],
+                        "lens_settings": dict(lens_settings),
                         "detected_objects": telemetry["detected_objects"],
+                        "color_distribution": telemetry["color_distribution"],
                         "total_detections": telemetry["total_detections"]
                     })
                     frame_cond.notify_all()
@@ -425,7 +393,7 @@ def video_capture_worker():
             time.sleep(0.02)
 
 
-# Start background video thread
+# Launch video worker thread
 video_thread = threading.Thread(target=video_capture_worker, daemon=True)
 video_thread.start()
 
@@ -490,7 +458,7 @@ def single_frame():
 
 @app.route('/api/status')
 def get_status():
-    """Returns current live camera, YOLO object detections, and color telemetry."""
+    """Returns live telemetry, lens adjustments, detected objects, and color counts."""
     with frame_cond:
         return jsonify(dict(latest_telemetry))
 
@@ -501,23 +469,26 @@ def set_source():
     global camera_source
     data = request.json or {}
     source = data.get("source", "baumer").lower()
-    if source in ["baumer", "live", "camera"]:
-        camera_source = "baumer"
-    else:
-        camera_source = "simulated"
+    if source in ["baumer", "simulated"]:
+        camera_source = source
+        print(f"Switched camera source to: {camera_source}")
     return jsonify({"camera_source": camera_source})
 
 
 @app.route('/api/set_exposure', methods=['POST'])
 def set_exposure():
-    """Sets camera exposure time in milliseconds."""
-    global baumer_exposure_ms, baumer_cam
+    """Adjusts exposure time of the Baumer GigE camera in milliseconds."""
+    global baumer_exposure_ms
     data = request.json or {}
-    exp_ms = float(data.get("exposure_ms", 30.0))
-    exp_ms = max(1.0, min(100.0, exp_ms))
-    baumer_exposure_ms = exp_ms
-    if baumer_cam:
-        baumer_cam.set_exposure_time(int(exp_ms * 1000))
+    exp = float(data.get("exposure_ms", 30.0))
+    baumer_exposure_ms = max(1.0, min(100.0, exp))
+
+    if baumer_cam is not None and baumer_connected:
+        try:
+            baumer_cam.set_exposure_time(int(baumer_exposure_ms * 1000))
+        except Exception as e:
+            logger.warning(f"Error setting exposure: {e}")
+
     return jsonify({"exposure_ms": baumer_exposure_ms})
 
 
@@ -531,7 +502,25 @@ def set_confidence():
     return jsonify({"confidence_cutoff": confidence_cutoff})
 
 
+@app.route('/api/set_lens', methods=['POST'])
+def set_lens():
+    """Adjusts real-time lens ISP settings: brightness, contrast, saturation, gamma, auto_wb."""
+    data = request.json or {}
+    if "brightness" in data:
+        lens_settings["brightness"] = float(data["brightness"])
+    if "contrast" in data:
+        lens_settings["contrast"] = float(data["contrast"])
+    if "saturation" in data:
+        lens_settings["saturation"] = float(data["saturation"])
+    if "gamma" in data:
+        lens_settings["gamma"] = float(data["gamma"])
+    if "auto_wb" in data:
+        lens_settings["auto_wb"] = bool(data["auto_wb"])
+
+    return jsonify({"lens_settings": lens_settings})
+
+
 if __name__ == '__main__':
     port = int(os.environ.get("PORT", 5050))
-    print(f"\n🚀 Starting Milma YOLO Object & Color Detection Dashboard on http://localhost:{port}")
+    print(f"\n🚀 Starting Vision AI Object & Color Detection Dashboard on http://localhost:{port}")
     app.run(host='0.0.0.0', port=port, debug=False, threaded=True)

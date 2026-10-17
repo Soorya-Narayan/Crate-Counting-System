@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Milma Kottayam - Live YOLO Object & Color Detection</title>
+    <title>Vision AI - Object Detection & Color Classification | Goose</title>
     <!-- Google Fonts -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -19,16 +19,16 @@
                 <div class="divider"></div>
                 <img src="/static/img/milma_logo.png" alt="Milma" class="logo milma-logo">
                 <div class="header-titles">
-                    <h1>MILMA KOTTAYAM DAIRY</h1>
-                    <span class="subtitle">Live Camera, YOLO Object Detection & Color Classification</span>
+                    <h1>VISION AI DETECTOR</h1>
+                    <span class="subtitle">Live Baumer VCXG.2-32C • Object Detection & Color Classifier</span>
                 </div>
             </div>
 
             <div class="header-right">
-                <!-- Source Toggle -->
+                <!-- Source Switcher -->
                 <div class="source-toggle-group">
                     <button id="btnSrcBaumer" class="btn-source active">📷 Baumer GigE</button>
-                    <button id="btnSrcSim" class="btn-source">Simulated</button>
+                    <button id="btnSrcSim" class="btn-source">Test Feed</button>
                 </div>
 
                 <!-- Camera Status Pill -->
@@ -41,14 +41,14 @@
             </div>
         </header>
 
-        <!-- Main Workspace -->
+        <!-- Main Content -->
         <main class="main-content">
             <!-- Hero Camera Viewport Card -->
             <section class="camera-card">
                 <div class="camera-header">
                     <div class="camera-info">
                         <span class="live-indicator">● LIVE AI STREAM</span>
-                        <h2 id="cameraTitle">Overhead Stream: Baumer VCXG.2-32C + YOLOv8</h2>
+                        <h2 id="cameraTitle">Overhead Machine Vision Stream: Baumer VCXG.2-32C</h2>
                     </div>
                     <div class="camera-telemetry">
                         <span id="telemetryFps">-- FPS</span>
@@ -59,29 +59,60 @@
 
                 <!-- Main Video Stream -->
                 <div class="video-wrapper">
-                    <img id="liveVideoFeed" src="/video_feed" alt="Milma Live Video Feed" class="video-feed">
+                    <img id="liveVideoFeed" src="/video_feed" alt="Live Camera Video Stream" class="video-feed">
                     <div class="video-crosshair"></div>
                 </div>
 
-                <!-- Viewport Control Ribbon -->
-                <div class="camera-ribbon">
-                    <div class="ribbon-controls">
+                <!-- Lens & Sensor Tuning Ribbon -->
+                <div class="lens-ribbon">
+                    <div class="lens-ribbon-title">
+                        <span>⚙️ LENS & SENSOR TUNING</span>
+                    </div>
+
+                    <div class="ribbon-controls-grid">
                         <!-- Exposure Slider -->
                         <div class="ribbon-item">
                             <label for="exposureRange">Exposure: <span id="exposureVal" class="font-mono">30</span> ms</label>
                             <input type="range" id="exposureRange" min="5" max="80" value="30" step="5" class="range-slider">
                         </div>
 
-                        <!-- YOLO Confidence Slider -->
+                        <!-- Brightness Slider -->
                         <div class="ribbon-item">
-                            <label for="confRange">YOLO Conf: <span id="confVal" class="font-mono">18</span>%</label>
-                            <input type="range" id="confRange" min="10" max="60" value="18" step="2" class="range-slider">
+                            <label for="brightnessRange">Brightness: <span id="brightnessVal" class="font-mono">+5</span></label>
+                            <input type="range" id="brightnessRange" min="-30" max="40" value="5" step="2" class="range-slider">
+                        </div>
+
+                        <!-- Contrast Slider -->
+                        <div class="ribbon-item">
+                            <label for="contrastRange">Contrast: <span id="contrastVal" class="font-mono">1.18</span>x</label>
+                            <input type="range" id="contrastRange" min="0.7" max="1.8" value="1.18" step="0.05" class="range-slider">
+                        </div>
+
+                        <!-- Saturation / Vibrancy Slider -->
+                        <div class="ribbon-item">
+                            <label for="saturationRange">Saturation: <span id="saturationVal" class="font-mono">1.35</span>x</label>
+                            <input type="range" id="saturationRange" min="0.5" max="2.4" value="1.35" step="0.05" class="range-slider">
+                        </div>
+
+                        <!-- Auto White Balance Toggle -->
+                        <div class="ribbon-item toggle-item">
+                            <label for="awbToggle">Auto White Balance</label>
+                            <button id="awbToggle" class="btn-toggle active">ON</button>
+                        </div>
+
+                        <!-- YOLO Confidence Threshold -->
+                        <div class="ribbon-item">
+                            <label for="confRange">Confidence: <span id="confVal" class="font-mono">20</span>%</label>
+                            <input type="range" id="confRange" min="10" max="60" value="20" step="2" class="range-slider">
                         </div>
                     </div>
 
-                    <div class="ribbon-buttons">
+                    <div class="ribbon-action-buttons">
+                        <button id="btnResetLens" class="btn btn-secondary">
+                            <span>↺ Reset Lens</span>
+                        </button>
                         <button id="btnSnapshot" class="btn btn-secondary">
-                            <span>📸 Capture Frame</span>
+                            <span>📸 Capture JPEG</span>
                         </button>
                         <button id="btnFullscreen" class="btn btn-secondary">
                             <span>⛶ Fullscreen</span>
@@ -90,80 +121,29 @@
                 </div>
             </section>
 
-            <!-- Live Detected Objects Deck -->
+            <!-- Detected Objects & Colors Deck -->
             <section class="objects-deck-card">
                 <div class="deck-header">
                     <div class="deck-title-group">
-                        <span class="deck-badge">LIVE DETECTIONS</span>
-                        <h3>Objects Identified by YOLO & Classified by Color</h3>
+                        <span class="deck-badge">DETECTED OBJECTS</span>
+                        <h3>Objects Identified by YOLO & Classified by Physical Color</h3>
                     </div>
                     <span class="deck-counter" id="totalObjectsBadge">0 Objects</span>
                 </div>
                 <div class="detected-chips-container" id="detectedChipsContainer">
-                    <span class="empty-state">No objects currently in camera frame. Place scissors, bottles, cups, or milk pouches in view...</span>
+                    <span class="empty-state">No objects currently in camera frame. Place scissors, bottles, cups, phone, mouse, or items in view...</span>
                 </div>
             </section>
 
-            <!-- Bottom Color Detection Telemetry Bar -->
-            <section class="color-panel">
-                <!-- Dominant Detected Variant Card -->
-                <div class="variant-result-card" id="variantCard">
-                    <span class="variant-label">DOMINANT MILK VARIANT</span>
-                    <div class="variant-hero">
-                        <div class="variant-icon-circle" id="variantIcon">⚪</div>
-                        <div class="variant-text-group">
-                            <h2 class="variant-name" id="variantName">SCANNING FOR POUCHES...</h2>
-                            <p class="variant-desc" id="variantDesc">Place Milma milk pouch under camera</p>
-                        </div>
-                    </div>
-                    <div class="variant-conf-bar">
-                        <div class="conf-fill" id="confFill" style="width: 0%;"></div>
-                    </div>
+            <!-- Color Breakdown Summary -->
+            <section class="color-breakdown-card">
+                <div class="breakdown-header">
+                    <h4>Active Color Distribution in Field of View</h4>
+                    <span class="subtitle">Real-time tally of physical colors identified</span>
                 </div>
-
-                <!-- 3 Project Color Detection Counters -->
-                <div class="color-cards-grid">
-                    <!-- Orange Variant -->
-                    <div class="color-stat-card orange">
-                        <div class="color-swatch orange-swatch"></div>
-                        <div class="color-details">
-                            <span class="color-name">ORANGE</span>
-                            <span class="product-name">Rich Milk (High Fat)</span>
-                            <div class="color-metrics">
-                                <span class="metric-count" id="countOrange">0</span>
-                                <span class="metric-label">items</span>
-                                <span class="metric-cov" id="covOrange">0.0% cov</span>
-                            </div>
-                        </div>
-                    </div>
-
-                    <!-- Violet Variant -->
-                    <div class="color-stat-card violet">
-                        <div class="color-swatch violet-swatch"></div>
-                        <div class="color-details">
-                            <span class="color-name">VIOLET</span>
-                            <span class="product-name">Toned Milk (Standard)</span>
-                            <div class="color-metrics">
-                                <span class="metric-count" id="countViolet">0</span>
-                                <span class="metric-label">items</span>
-                                <span class="metric-cov" id="covViolet">0.0% cov</span>
-                            </div>
-                        </div>
-                    </div>
-
-                    <!-- Green Variant -->
-                    <div class="color-stat-card green">
-                        <div class="color-swatch green-swatch"></div>
-                        <div class="color-details">
-                            <span class="color-name">GREEN</span>
-                            <span class="product-name">Smart Milk (Double Toned)</span>
-                            <div class="color-metrics">
-                                <span class="metric-count" id="countGreen">0</span>
-                                <span class="metric-label">items</span>
-                                <span class="metric-cov" id="covGreen">0.0% cov</span>
-                            </div>
-                        </div>
-                    </div>
+                <div class="color-palette-grid" id="colorPaletteGrid">
+                    <!-- Dynamically populated by dashboard.js -->
+                    <span class="empty-palette">Awaiting object detections...</span>
                 </div>
             </section>
         </main>
