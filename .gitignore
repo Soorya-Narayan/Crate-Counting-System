@@ -30,3 +30,7 @@ test_*.jpg
 live_*.jpg
 yolo_*.jpg
 snapshots/
+
+# Local datasets & annotations
+dataset/
+annotated/
