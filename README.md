@@ -54,6 +54,19 @@ Developed and deployed by **Goose Industrial Solutions**.
 
 ## System Architecture & Features
 
+> 📘 **Full Architecture Specification:** See [ARCHITECTURE.md](ARCHITECTURE.md) for the complete hardware, optical, latency budget, and neural network pipeline specifications.
+
+```mermaid
+flowchart LR
+    A[Conveyor 24 CPM] --> B[Baumer GigE Camera]
+    B --> C[Edge Pure-Python Driver]
+    C --> D[YOLO Instance Segmentation]
+    D --> E[Multi-Spectral Consensus]
+    E --> F[20-Count Anomaly Logic]
+    F --> G[Live Operator HMI :5050]
+    F --> H[Audit & Shift CSV Export]
+```
+
 ### 1. Deep Learning Instance Segmentation (`milma_counter.py`)
 - Detects and segments 500 ml pillow milk pouches packed in standard overlapping 2-lane configurations (~10 pouches per lane).
 - **Nominal Target:** Verifies strict **20 pouches per crate**.
