@@ -15,6 +15,32 @@ Developed and deployed by **Goose Industrial Solutions**.
 | **Milestone 3** | Operator Web Dashboard & HMI | **Completed** | Live on port 5050 with dual-source video, live telemetry, defect injection, and CSV export. |
 | **Milestone 4** | Physical Camera Hardware Driver | **Completed** | Pure-Python GigE Vision 2.0 streaming on macOS with 0% packet drop at 2048×1536 resolution. |
 | **Milestone 5** | Live Footage & Focus Viewer Tool | **Completed** | Desktop GUI tool with live HUD, exposure controls, and Laplacian focus metric for lens calibration. |
+| **Milestone 6** | 50-Epoch Production YOLOv8s Model | **Completed** | **98.25% mAP50**, **80.51% mAP50-95** on held-out test split, 3.0ms inference latency. |
+
+---
+
+## Model Training Performance & Verification Graphs
+
+The custom milk pouch and crate detection engine was trained for **50 full epochs** using **YOLOv8s** (11.2M parameters) on Apple Silicon Metal GPU acceleration (`mps`) with AdamW and a Cosine Learning Rate schedule.
+
+### 1. Training & Validation Loss / Metric Curves
+![Training Curves](docs/training_metrics/results.png)
+
+### 2. Multi-Class Confusion Matrix (Normalized)
+![Confusion Matrix](docs/training_metrics/confusion_matrix_normalized.png)
+
+### 3. Key Benchmark Metrics on Held-Out Test Split (236 Images, 2,871 Objects)
+* **Test mAP50:** **98.25%**
+* **Test mAP50-95:** **80.51%**
+* **Inference Speed:** **3.0 ms** (~330 FPS raw throughput)
+* **Class Accuracies:**
+  * `empty_tray`: **99.5% mAP50** (100% Recall)
+  * `pouch_purple`: **99.4% mAP50** (98.5% Recall)
+  * `pouch_orange`: **98.2% mAP50** (95.2% Recall)
+  * `pouch_green`: **97.5% mAP50** (96.9% Recall)
+  * `crate`: **96.7% mAP50** (88.5% Recall)
+
+> 📊 **Full Graph Suite:** See [docs/training_metrics/README.md](docs/training_metrics/README.md) for F1-Confidence curves, Precision-Recall curves, and visual test predictions.
 
 ---
 
