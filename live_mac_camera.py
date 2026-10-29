@@ -39,7 +39,8 @@ def parse_args():
     parser = argparse.ArgumentParser(description="Milma Live Mac Camera Inference")
     parser.add_argument("--model", type=str, default="milma_best.pt", help="Path to trained weights")
     parser.add_argument("--camera", type=int, default=0, help="Camera index (0 is usually Mac built-in)")
-    parser.add_argument("--conf", type=float, default=0.25, help="Confidence threshold (0.05 - 0.95)")
+    parser.add_argument("--conf", type=float, default=0.38, help="Confidence threshold (0.05 - 0.95)")
+    parser.add_argument("--iou", type=float, default=0.45, help="NMS IoU threshold for overlapping pouches")
     parser.add_argument("--device", type=str, default="mps", help="Device: 'mps', 'cpu', or '0'")
     return parser.parse_args()
 
@@ -59,6 +60,7 @@ def main():
     print(f"• Model Weights: {model_path}")
     print(f"• Camera Index : {args.camera}")
     print(f"• Initial Conf : {args.conf:.2f}")
+    print(f"• NMS IoU      : {args.iou:.2f}")
     print(f"• Device       : {args.device}")
     print("Loading YOLOv8 neural network...")
 
@@ -84,6 +86,7 @@ def main():
     print("Press 'q' to quit, 's' to snapshot, '+/-' to tune confidence.")
 
     conf_thresh = args.conf
+    iou_thresh = args.iou
     fps_history = []
     prev_time = time.time()
     snapshot_dir = "snapshots"
@@ -109,10 +112,11 @@ def main():
                 fps_history.pop(0)
             avg_fps = sum(fps_history) / len(fps_history)
 
-            # Inference
+            # Inference with calibrated NMS IoU
             results = model.predict(
                 frame,
                 conf=conf_thresh,
+                iou=iou_thresh,
                 imgsz=640,
                 device=args.device,
                 verbose=False
@@ -124,24 +128,65 @@ def main():
             counts = {k: 0 for k in CLASS_CONFIG.keys()}
             total_pouches = 0
 
-            # Draw boxes
+            raw_boxes = []
             if results.boxes is not None:
                 for b in results.boxes:
                     x1, y1, x2, y2 = [int(v) for v in b.xyxy[0]]
                     cls_id = int(b.cls[0])
                     conf = float(b.conf[0])
                     class_name = model.names[cls_id]
+                    area = (x2 - x1) * (y2 - y1)
+                    raw_boxes.append({
+                        "bbox": (x1, y1, x2, y2),
+                        "conf": conf,
+                        "class_name": class_name,
+                        "area": area
+                    })
 
-                    cfg = CLASS_CONFIG.get(class_name, {"bgr": (200, 200, 200), "name": class_name})
-                    bgr = cfg["bgr"]
+            # Sort descending by confidence
+            raw_boxes.sort(key=lambda x: x["conf"], reverse=True)
 
-                    if class_name in counts:
-                        counts[class_name] += 1
-                    if "pouch" in class_name:
-                        total_pouches += 1
+            # IoS Containment Deduplication (prunes internal fold / logo sub-boxes)
+            filtered_boxes = []
+            for candidate in raw_boxes:
+                cx1, cy1, cx2, cy2 = candidate["bbox"]
+                c_area = candidate["area"]
+                is_pouch = "pouch" in candidate["class_name"]
 
-                    # Bounding Box
-                    cv2.rectangle(annotated, (x1, y1), (x2, y2), bgr, 2)
+                is_dup = False
+                if is_pouch:
+                    for kept in filtered_boxes:
+                        if "pouch" not in kept["class_name"]:
+                            continue
+                        kx1, ky1, kx2, ky2 = kept["bbox"]
+                        k_area = kept["area"]
+                        ix1, iy1 = max(cx1, kx1), max(cy1, ky1)
+                        ix2, iy2 = min(cx2, kx2), min(cy2, ky2)
+                        if ix2 > ix1 and iy2 > iy1:
+                            inter = (ix2 - ix1) * (iy2 - iy1)
+                            ios = inter / min(c_area, k_area)
+                            if ios > 0.50:
+                                is_dup = True
+                                break
+                if not is_dup:
+                    filtered_boxes.append(candidate)
+
+            # Draw boxes
+            for item in filtered_boxes:
+                x1, y1, x2, y2 = item["bbox"]
+                class_name = item["class_name"]
+                conf = item["conf"]
+
+                cfg = CLASS_CONFIG.get(class_name, {"bgr": (200, 200, 200), "name": class_name})
+                bgr = cfg["bgr"]
+
+                if class_name in counts:
+                    counts[class_name] += 1
+                if "pouch" in class_name:
+                    total_pouches += 1
+
+                # Bounding Box
+                cv2.rectangle(annotated, (x1, y1), (x2, y2), bgr, 2)
 
                     # Badge
                     label = f"{class_name.upper()} {int(conf * 100)}%"

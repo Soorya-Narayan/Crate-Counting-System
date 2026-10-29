@@ -35,8 +35,8 @@ print(f"Loading custom Milma YOLO model from: {custom_weights}...")
 yolo_model = YOLO(custom_weights)
 print(f"✓ Milma YOLO model ready ({len(yolo_model.names)} classes: {list(yolo_model.names.values())}).")
 
-# Detection cutoff
-confidence_cutoff = 0.20
+# Detection cutoff (tuned for zero duplicate count on shingled pouches)
+confidence_cutoff = 0.38
 
 # Hardware Camera & Lens ISP Settings
 baumer_cam: Optional[BaumerCamera] = None
@@ -205,17 +205,16 @@ def process_frame_detections(frame: np.ndarray) -> Tuple[np.ndarray, Dict[str, A
     h, w = frame.shape[:2]
     annotated = frame.copy()
 
-    # Run YOLOv8 inference
+    # Run YOLOv8 inference with tight NMS IoU threshold (0.45)
     results = yolo_model.predict(
         frame,
         imgsz=640,
         conf=confidence_cutoff,
+        iou=0.45,
         verbose=False
     )[0]
 
-    detected_items = []
-    color_dist: Dict[str, int] = {}
-
+    raw_candidates = []
     if results.boxes is not None:
         for b in results.boxes:
             x1, y1, x2, y2 = [int(v) for v in b.xyxy[0]]
@@ -229,53 +228,96 @@ def process_frame_detections(frame: np.ndarray) -> Tuple[np.ndarray, Dict[str, A
             if x2 <= x1 or y2 <= y1:
                 continue
 
-            # Color and class mapping
-            CUSTOM_CLASSES = {
-                "crate": {"bgr": (240, 110, 20), "hex": "#3b82f6", "color": "BLUE"},
-                "empty_tray": {"bgr": (0, 215, 245), "hex": "#eab308", "color": "YELLOW"},
-                "pouch_green": {"bgr": (40, 205, 50), "hex": "#22c55e", "color": "GREEN"},
-                "pouch_orange": {"bgr": (0, 135, 245), "hex": "#f97316", "color": "ORANGE"},
-                "pouch_purple": {"bgr": (210, 60, 175), "hex": "#a855f7", "color": "PURPLE"}
-            }
-
-            if obj_name in CUSTOM_CLASSES:
-                c_info = CUSTOM_CLASSES[obj_name]
-                color_name = c_info["color"]
-                bgr_color = c_info["bgr"]
-                hex_color = c_info["hex"]
-            else:
-                # Crop object and classify its color with fallback
-                crop = frame[y1:y2, x1:x2]
-                color_name, bgr_color, hex_color = classify_roi_color(crop)
-
-            color_dist[color_name] = color_dist.get(color_name, 0) + 1
-
-            detected_items.append({
-                "object": obj_name,
-                "color": color_name,
-                "color_hex": hex_color,
-                "bgr": bgr_color,
-                "confidence": round(conf * 100.0, 1),
-                "bbox": [x1, y1, x2, y2]
+            area = (x2 - x1) * (y2 - y1)
+            raw_candidates.append({
+                "bbox": (x1, y1, x2, y2),
+                "conf": conf,
+                "obj_name": obj_name,
+                "area": area
             })
 
-            # Draw visual annotation
-            cv2.rectangle(annotated, (x1, y1), (x2, y2), bgr_color, 2)
+    # Sort candidates by confidence descending
+    raw_candidates.sort(key=lambda it: it["conf"], reverse=True)
 
-            label = f"{obj_name.upper()} • {color_name} ({int(conf * 100)}%)"
-            font = cv2.FONT_HERSHEY_SIMPLEX
-            font_scale = 0.55 if w < 1200 else 0.70
-            thickness = 1 if w < 1200 else 2
-            (lw, lh), _ = cv2.getTextSize(label, font, font_scale, thickness)
+    # IoS (Intersection over Smaller) Containment Deduplication
+    # Eliminates phantom sub-boxes, logo fragments, and fold double-detections inside pouches
+    filtered_items = []
+    for cand in raw_candidates:
+        cx1, cy1, cx2, cy2 = cand["bbox"]
+        c_area = cand["area"]
+        is_pouch = "pouch" in cand["obj_name"]
 
-            # Badge background
-            badge_y1 = max(0, y1 - lh - 8)
-            badge_y2 = max(lh + 8, y1)
-            cv2.rectangle(annotated, (x1, badge_y1), (x1 + lw + 12, badge_y2), bgr_color, -1)
+        is_dup = False
+        if is_pouch:
+            for kept in filtered_items:
+                if "pouch" not in kept["obj_name"]:
+                    continue
+                kx1, ky1, kx2, ky2 = kept["bbox"]
+                k_area = kept["area"]
+                ix1, iy1 = max(cx1, kx1), max(cy1, ky1)
+                ix2, iy2 = min(cx2, kx2), min(cy2, ky2)
+                if ix2 > ix1 and iy2 > iy1:
+                    inter = (ix2 - ix1) * (iy2 - iy1)
+                    ios = inter / min(c_area, k_area)
+                    if ios > 0.50:
+                        is_dup = True
+                        break
+        if not is_dup:
+            filtered_items.append(cand)
 
-            # Text color (contrast-aware)
-            text_color = (0, 0, 0) if color_name in ["WHITE", "YELLOW", "CYAN", "PINK"] else (255, 255, 255)
-            cv2.putText(annotated, label, (x1 + 6, max(lh + 2, y1 - 3)), font, font_scale, text_color, thickness, cv2.LINE_AA)
+    detected_items = []
+    color_dist: Dict[str, int] = {}
+
+    CUSTOM_CLASSES = {
+        "crate": {"bgr": (240, 110, 20), "hex": "#3b82f6", "color": "BLUE"},
+        "empty_tray": {"bgr": (0, 215, 245), "hex": "#eab308", "color": "YELLOW"},
+        "pouch_green": {"bgr": (40, 205, 50), "hex": "#22c55e", "color": "GREEN"},
+        "pouch_orange": {"bgr": (0, 135, 245), "hex": "#f97316", "color": "ORANGE"},
+        "pouch_purple": {"bgr": (210, 60, 175), "hex": "#a855f7", "color": "PURPLE"}
+    }
+
+    for item in filtered_items:
+        x1, y1, x2, y2 = item["bbox"]
+        obj_name = item["obj_name"]
+        conf = item["conf"]
+
+        if obj_name in CUSTOM_CLASSES:
+            c_info = CUSTOM_CLASSES[obj_name]
+            color_name = c_info["color"]
+            bgr_color = c_info["bgr"]
+            hex_color = c_info["hex"]
+        else:
+            crop = frame[y1:y2, x1:x2]
+            color_name, bgr_color, hex_color = classify_roi_color(crop)
+
+        color_dist[color_name] = color_dist.get(color_name, 0) + 1
+
+        detected_items.append({
+            "object": obj_name,
+            "color": color_name,
+            "color_hex": hex_color,
+            "bgr": bgr_color,
+            "confidence": round(conf * 100.0, 1),
+            "bbox": [x1, y1, x2, y2]
+        })
+
+        # Draw visual annotation
+        cv2.rectangle(annotated, (x1, y1), (x2, y2), bgr_color, 2)
+
+        label = f"{obj_name.upper()} • {color_name} ({int(conf * 100)}%)"
+        font = cv2.FONT_HERSHEY_SIMPLEX
+        font_scale = 0.55 if w < 1200 else 0.70
+        thickness = 1 if w < 1200 else 2
+        (lw, lh), _ = cv2.getTextSize(label, font, font_scale, thickness)
+
+        # Badge background
+        badge_y1 = max(0, y1 - lh - 8)
+        badge_y2 = max(lh + 8, y1)
+        cv2.rectangle(annotated, (x1, badge_y1), (x1 + lw + 12, badge_y2), bgr_color, -1)
+
+        # Text color (contrast-aware)
+        text_color = (0, 0, 0) if color_name in ["WHITE", "YELLOW", "CYAN", "PINK"] else (255, 255, 255)
+        cv2.putText(annotated, label, (x1 + 6, max(lh + 2, y1 - 3)), font, font_scale, text_color, thickness, cv2.LINE_AA)
 
     # Top HUD Bar
     hud_h = 50 if h < 1000 else 64

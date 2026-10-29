@@ -312,8 +312,8 @@ document.addEventListener('DOMContentLoaded', () => {
         contrastVal.textContent = '1.18';
         saturationRange.value = 1.35;
         saturationVal.textContent = '1.35';
-        confRange.value = 20;
-        confVal.textContent = '20';
+        confRange.value = 38;
+        confVal.textContent = '38';
         autoWbState = true;
         awbToggle.textContent = 'ON';
         awbToggle.classList.add('active');
@@ -333,7 +333,7 @@ document.addEventListener('DOMContentLoaded', () => {
         await fetch('/api/set_confidence', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ confidence: 0.20 })
+            body: JSON.stringify({ confidence: 0.38 })
         });
         fetchStatus();
     });
