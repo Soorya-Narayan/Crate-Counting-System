@@ -34,3 +34,4 @@ snapshots/
 # Local datasets & annotations
 dataset/
 annotated/
+master_yolo_dataset/
