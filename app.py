@@ -30,9 +30,10 @@ app = Flask(__name__)
 # GLOBAL CONFIGURATION & TUNING PARAMETERS
 # ==============================================================================
 # YOLO Model
-print("Loading YOLOv8 object detection model...")
-yolo_model = YOLO("yolov8n.pt")
-print("✓ YOLOv8 model ready.")
+custom_weights = "milma_best.pt" if os.path.exists("milma_best.pt") else "yolov8n.pt"
+print(f"Loading custom Milma YOLO model from: {custom_weights}...")
+yolo_model = YOLO(custom_weights)
+print(f"✓ Milma YOLO model ready ({len(yolo_model.names)} classes: {list(yolo_model.names.values())}).")
 
 # Detection cutoff
 confidence_cutoff = 0.20
@@ -40,7 +41,7 @@ confidence_cutoff = 0.20
 # Hardware Camera & Lens ISP Settings
 baumer_cam: Optional[BaumerCamera] = None
 baumer_connected = False
-camera_source = "baumer"  # 'baumer' or 'simulated'
+camera_source = "simulated"  # 'simulated' (dataset playback) or 'baumer' (physical camera)
 baumer_exposure_ms = 30.0
 
 # Live Lens ISP Adjustments
@@ -228,9 +229,24 @@ def process_frame_detections(frame: np.ndarray) -> Tuple[np.ndarray, Dict[str, A
             if x2 <= x1 or y2 <= y1:
                 continue
 
-            # Crop object and classify its color
-            crop = frame[y1:y2, x1:x2]
-            color_name, bgr_color, hex_color = classify_roi_color(crop)
+            # Color and class mapping
+            CUSTOM_CLASSES = {
+                "crate": {"bgr": (240, 110, 20), "hex": "#3b82f6", "color": "BLUE"},
+                "empty_tray": {"bgr": (0, 215, 245), "hex": "#eab308", "color": "YELLOW"},
+                "pouch_green": {"bgr": (40, 205, 50), "hex": "#22c55e", "color": "GREEN"},
+                "pouch_orange": {"bgr": (0, 135, 245), "hex": "#f97316", "color": "ORANGE"},
+                "pouch_purple": {"bgr": (210, 60, 175), "hex": "#a855f7", "color": "PURPLE"}
+            }
+
+            if obj_name in CUSTOM_CLASSES:
+                c_info = CUSTOM_CLASSES[obj_name]
+                color_name = c_info["color"]
+                bgr_color = c_info["bgr"]
+                hex_color = c_info["hex"]
+            else:
+                # Crop object and classify its color with fallback
+                crop = frame[y1:y2, x1:x2]
+                color_name, bgr_color, hex_color = classify_roi_color(crop)
 
             color_dist[color_name] = color_dist.get(color_name, 0) + 1
 
@@ -345,13 +361,34 @@ def video_capture_worker():
                 baumer_cam = None
                 baumer_connected = False
 
-            # Synthetic colorful test frame
-            sim_frame = np.full((720, 1280, 3), (25, 28, 34), dtype=np.uint8)
-            cv2.circle(sim_frame, (320, 360), 90, (240, 60, 40), -1)   # Blue
-            cv2.rectangle(sim_frame, (520, 270), (700, 450), (40, 205, 50), -1) # Green
-            cv2.circle(sim_frame, (900, 360), 90, (30, 30, 235), -1)   # Red
-            frame = sim_frame
-            time.sleep(0.05)
+            # Simulated Feed fallback (cycles through real plant test crates)
+            if not hasattr(video_capture_worker, "test_images"):
+                import glob
+                t_imgs = sorted(glob.glob("master_yolo_dataset/images/test/*.jpg"))
+                video_capture_worker.test_images = t_imgs
+                video_capture_worker.img_idx = 0
+                video_capture_worker.last_switch = 0.0
+
+            if getattr(video_capture_worker, "test_images", None):
+                now_s = time.time()
+                if now_s - video_capture_worker.last_switch > 2.0:
+                    video_capture_worker.img_idx = (video_capture_worker.img_idx + 1) % len(video_capture_worker.test_images)
+                    video_capture_worker.last_switch = now_s
+                
+                img_path = video_capture_worker.test_images[video_capture_worker.img_idx]
+                loaded_frame = cv2.imread(img_path)
+                if loaded_frame is not None:
+                    frame = loaded_frame
+                else:
+                    frame = np.full((720, 1280, 3), (25, 28, 34), dtype=np.uint8)
+                time.sleep(0.04)
+            else:
+                sim_frame = np.full((720, 1280, 3), (25, 28, 34), dtype=np.uint8)
+                cv2.circle(sim_frame, (320, 360), 90, (240, 60, 40), -1)   # Blue
+                cv2.rectangle(sim_frame, (520, 270), (700, 450), (40, 205, 50), -1) # Green
+                cv2.circle(sim_frame, (900, 360), 90, (30, 30, 235), -1)   # Red
+                frame = sim_frame
+                time.sleep(0.05)
 
         if frame is not None:
             # FPS Calculation

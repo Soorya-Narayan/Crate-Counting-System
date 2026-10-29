@@ -156,14 +156,17 @@ class MilmaPouchCounter:
             return
 
         if model_path and os.path.exists(model_path):
-            print(f"[MilmaCounter] Loading custom YOLO segmentation model: {model_path}")
+            print(f"[MilmaCounter] Loading custom YOLO model: {model_path}")
             self.model = YOLO(model_path)
+        elif os.path.exists("milma_best.pt"):
+            print("[MilmaCounter] Loading custom trained Milma weights: milma_best.pt")
+            self.model = YOLO("milma_best.pt")
         else:
-            # Use base YOLOv8-seg model or fallback for prototyping
-            print("[MilmaCounter] Custom weights not provided. Initializing base YOLOv8-seg...")
+            # Use base YOLOv8 model or fallback for prototyping
+            print("[MilmaCounter] Custom weights not found. Checking fallback YOLOv8...")
             try:
-                self.model = YOLO("yolov8n-seg.pt")
-                print("[MilmaCounter] Base YOLOv8n-seg model ready.")
+                self.model = YOLO("yolov8n.pt")
+                print("[MilmaCounter] Base YOLOv8n model ready.")
             except Exception as e:
                 print(f"[MilmaCounter] Note on YOLO initialization: {e}. Will use high-precision CV contour fallback.")
                 self.model = None
@@ -294,14 +297,35 @@ class MilmaPouchCounter:
             cy = (y1 + y2) // 2
             area = float((x2 - x1) * (y2 - y1))
 
-            # Classify variant
-            variant, var_conf = self.classify_pouch_variant(frame, (x1, y1, x2, y2))
+            cls_id = int(box.cls[0].cpu().numpy())
+            class_name = self.model.names.get(cls_id, "")
+
+            # If model detected the outer crate boundary, do not count the crate itself as a pouch
+            if class_name == "crate":
+                continue
+            # If model detected an empty tray, no pouches inside
+            if class_name == "empty_tray":
+                continue
+
+            # Classify variant directly from custom neural network
+            if class_name == "pouch_green":
+                variant = PouchVariant.GREEN
+                var_conf = conf
+            elif class_name == "pouch_orange":
+                variant = PouchVariant.ORANGE
+                var_conf = conf
+            elif class_name == "pouch_purple":
+                variant = PouchVariant.VIOLET
+                var_conf = conf
+            else:
+                # Fallback to chromaticity analysis if using generic weights
+                variant, var_conf = self.classify_pouch_variant(frame, (x1, y1, x2, y2))
 
             # Lane determination (assuming crate height is split into 2 lanes along Y or X)
             lane_id = 1 if cy < h // 2 else 2
 
             detections.append(PouchDetection(
-                id=i + 1,
+                id=len(detections) + 1,
                 bbox=(x1, y1, x2, y2),
                 center=(cx, cy),
                 polygon=polygon,
