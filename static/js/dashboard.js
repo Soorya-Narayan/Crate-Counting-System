@@ -16,6 +16,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const liveVideoFeed = document.getElementById('liveVideoFeed');
 
     // Source Toggles
+    const btnSrcWebcam = document.getElementById('btnSrcWebcam');
     const btnSrcBaumer = document.getElementById('btnSrcBaumer');
     const btnSrcSim = document.getElementById('btnSrcSim');
 
@@ -103,8 +104,16 @@ document.addEventListener('DOMContentLoaded', () => {
 
     function updateUI(data) {
         // 1. Connection & Source Status
-        if (data.camera_source === 'baumer') {
+        if (data.camera_source === 'webcam') {
+            if (btnSrcWebcam) btnSrcWebcam.classList.add('active');
+            btnSrcBaumer.classList.remove('active');
+            btnSrcSim.classList.remove('active');
+            camStatusPill.className = 'status-pill';
+            camStatusText.textContent = 'MAC CAMERA ONLINE (Built-in)';
+            cameraTitle.textContent = 'Mac FaceTime HD Camera • Milma Pouch & Crate AI Stream';
+        } else if (data.camera_source === 'baumer') {
             btnSrcBaumer.classList.add('active');
+            if (btnSrcWebcam) btnSrcWebcam.classList.remove('active');
             btnSrcSim.classList.remove('active');
 
             if (data.camera_connected) {
@@ -118,10 +127,11 @@ document.addEventListener('DOMContentLoaded', () => {
             }
         } else {
             btnSrcSim.classList.add('active');
+            if (btnSrcWebcam) btnSrcWebcam.classList.remove('active');
             btnSrcBaumer.classList.remove('active');
             camStatusPill.className = 'status-pill';
             camStatusText.textContent = 'TEST FEED ACTIVE';
-            cameraTitle.textContent = 'Synthetic Color & Pattern Test Stream';
+            cameraTitle.textContent = 'Plant Test Crate Stream (master_yolo_dataset)';
         }
 
         // 2. FPS & Exposure
@@ -329,6 +339,17 @@ document.addEventListener('DOMContentLoaded', () => {
     });
 
     // Source Toggle
+    if (btnSrcWebcam) {
+        btnSrcWebcam.addEventListener('click', async () => {
+            await fetch('/api/set_source', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ source: 'webcam' })
+            });
+            fetchStatus();
+        });
+    }
+
     btnSrcBaumer.addEventListener('click', async () => {
         await fetch('/api/set_source', {
             method: 'POST',
