@@ -56,7 +56,7 @@ def train(epochs=50, imgsz=640, batch=16, model_type="yolov8n.pt", device=None):
         name="milma_pouch_detector",
         save=True,
         patience=15,
-        workers=4,
+        workers=2,
         exist_ok=True,
         pretrained=True,
         plots=True,

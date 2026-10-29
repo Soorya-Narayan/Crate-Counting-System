@@ -56,7 +56,7 @@ lens_settings = {
 # Stream Frame & Telemetry State
 latest_jpeg_frame: Optional[bytes] = None
 latest_telemetry: Dict[str, Any] = {
-    "camera_source": "baumer",
+    "camera_source": "simulated",
     "camera_connected": False,
     "fps": 0.0,
     "exposure_ms": 30.0,
@@ -319,6 +319,7 @@ def video_capture_worker():
     """Continuously fetches frames, enhances lens colors, runs YOLO detection, and feeds stream."""
     global baumer_cam, baumer_connected, camera_source, latest_jpeg_frame, latest_telemetry, latest_frame_id
 
+    webcam_cap = None
     fps_count = 0
     fps_timer = time.time()
     current_fps = 0.0
@@ -327,6 +328,13 @@ def video_capture_worker():
         frame = None
 
         if camera_source == "baumer":
+            if webcam_cap is not None:
+                try:
+                    webcam_cap.release()
+                except Exception:
+                    pass
+                webcam_cap = None
+
             if baumer_cam is None:
                 try:
                     print("Connecting to Baumer VCXG.2-32C at 169.254.123.85...")
@@ -350,8 +358,43 @@ def video_capture_worker():
                 frame = enhance_lens_frame(raw_frame)
             else:
                 time.sleep(0.01)
+
+        elif camera_source == "webcam":
+            if baumer_cam is not None:
+                try:
+                    baumer_cam.stop_stream()
+                    baumer_cam.disconnect()
+                except Exception:
+                    pass
+                baumer_cam = None
+                baumer_connected = False
+
+            if webcam_cap is None or not webcam_cap.isOpened():
+                try:
+                    webcam_cap = cv2.VideoCapture(0)
+                    webcam_cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
+                    webcam_cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
+                    time.sleep(0.2)
+                except Exception as e:
+                    logger.warning(f"Mac Webcam init error: {e}")
+                    time.sleep(1.0)
+                    continue
+
+            ret, raw_frame = webcam_cap.read()
+            if ret and raw_frame is not None:
+                frame = enhance_lens_frame(raw_frame)
+            else:
+                time.sleep(0.02)
+
         else:
             # Simulated Feed fallback
+            if webcam_cap is not None:
+                try:
+                    webcam_cap.release()
+                except Exception:
+                    pass
+                webcam_cap = None
+
             if baumer_cam is not None:
                 try:
                     baumer_cam.stop_stream()
@@ -502,11 +545,11 @@ def get_status():
 
 @app.route('/api/set_source', methods=['POST'])
 def set_source():
-    """Toggle between physical Baumer camera and simulated feed."""
+    """Toggle between physical Baumer camera, Mac webcam, and simulated test feed."""
     global camera_source
     data = request.json or {}
     source = data.get("source", "baumer").lower()
-    if source in ["baumer", "simulated"]:
+    if source in ["baumer", "webcam", "simulated"]:
         camera_source = source
         print(f"Switched camera source to: {camera_source}")
     return jsonify({"camera_source": camera_source})
