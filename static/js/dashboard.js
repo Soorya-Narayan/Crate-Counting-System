@@ -34,9 +34,17 @@ document.addEventListener('DOMContentLoaded', () => {
     const confVal = document.getElementById('confVal');
 
     // Action Buttons
+    const btnToggleRoi = document.getElementById('btnToggleRoi');
+    const btnResetTripwire = document.getElementById('btnResetTripwire');
     const btnResetLens = document.getElementById('btnResetLens');
     const btnSnapshot = document.getElementById('btnSnapshot');
     const btnFullscreen = document.getElementById('btnFullscreen');
+
+    // Audit & Tracking Elements
+    const crateAuditBadge = document.getElementById('crateAuditBadge');
+    const cratePouchesCount = document.getElementById('cratePouchesCount');
+    const tripwireCrossedCount = document.getElementById('tripwireCrossedCount');
+    const activeTracksCount = document.getElementById('activeTracksCount');
 
     // Detections & Color Palettes
     const totalObjectsBadge = document.getElementById('totalObjectsBadge');
@@ -134,9 +142,28 @@ document.addEventListener('DOMContentLoaded', () => {
             cameraTitle.textContent = 'Plant Test Crate Stream (master_yolo_dataset)';
         }
 
-        // 2. FPS & Exposure
+        // 2. FPS, Exposure & Tripwire KPI Telemetry
         telemetryFps.textContent = `${(data.fps || 0.0).toFixed(1)} FPS`;
         telemetryExp.textContent = `Exp: ${(data.exposure_ms || 30.0).toFixed(1)} ms`;
+
+        if (crateAuditBadge && data.last_audit_status) {
+            crateAuditBadge.textContent = data.last_audit_status;
+            crateAuditBadge.className = data.last_audit_class || 'badge-pass';
+        }
+        if (cratePouchesCount && data.current_crate_pouches !== undefined) {
+            cratePouchesCount.textContent = `${data.current_crate_pouches} / 20`;
+        }
+        if (tripwireCrossedCount && data.total_counted_pouches !== undefined) {
+            tripwireCrossedCount.textContent = (data.total_counted_pouches).toLocaleString();
+        }
+        if (activeTracksCount && data.active_tracks_count !== undefined) {
+            activeTracksCount.textContent = data.active_tracks_count;
+        }
+        if (btnToggleRoi && data.roi_enabled !== undefined) {
+            btnToggleRoi.classList.toggle('active', data.roi_enabled);
+            const span = btnToggleRoi.querySelector('span');
+            if (span) span.textContent = data.roi_enabled ? '🎯 Conveyor ROI [ON]' : '🎯 Conveyor ROI [OFF]';
+        }
 
         // Sync slider values when not actively dragging
         if (!isInteracting) {
@@ -337,6 +364,36 @@ document.addEventListener('DOMContentLoaded', () => {
         });
         fetchStatus();
     });
+
+    // Toggle Conveyor ROI
+    if (btnToggleRoi) {
+        btnToggleRoi.addEventListener('click', async () => {
+            const res = await fetch('/api/toggle_roi', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({})
+            });
+            if (res.ok) {
+                const d = await res.json();
+                btnToggleRoi.classList.toggle('active', d.roi_enabled);
+                const span = btnToggleRoi.querySelector('span');
+                if (span) span.textContent = d.roi_enabled ? '🎯 Conveyor ROI [ON]' : '🎯 Conveyor ROI [OFF]';
+            }
+            fetchStatus();
+        });
+    }
+
+    // Reset Tripwire Pouch Count
+    if (btnResetTripwire) {
+        btnResetTripwire.addEventListener('click', async () => {
+            await fetch('/api/reset_tripwire', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({})
+            });
+            fetchStatus();
+        });
+    }
 
     // Source Toggle
     if (btnSrcWebcam) {

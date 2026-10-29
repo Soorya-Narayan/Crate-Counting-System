@@ -58,6 +58,29 @@
                     </div>
                 </div>
 
+                <!-- Conveyor Tripwire & Audit Bar -->
+                <div class="audit-tracking-bar">
+                    <div class="audit-kpi">
+                        <span class="kpi-label">CRATE AUDIT</span>
+                        <span class="kpi-value badge-pass" id="crateAuditBadge">NOMINAL (20/20)</span>
+                    </div>
+                    <div class="audit-divider"></div>
+                    <div class="audit-kpi">
+                        <span class="kpi-label">POUCHES IN CRATE</span>
+                        <span class="kpi-value font-mono" id="cratePouchesCount">0 / 20</span>
+                    </div>
+                    <div class="audit-divider"></div>
+                    <div class="audit-kpi">
+                        <span class="kpi-label">TRIPWIRE CROSSED</span>
+                        <span class="kpi-value font-mono text-neon" id="tripwireCrossedCount">0</span>
+                    </div>
+                    <div class="audit-divider"></div>
+                    <div class="audit-kpi">
+                        <span class="kpi-label">ACTIVE TRACKS</span>
+                        <span class="kpi-value font-mono" id="activeTracksCount">0</span>
+                    </div>
+                </div>
+
                 <!-- Main Video Stream -->
                 <div class="video-wrapper">
                     <img id="liveVideoFeed" src="/video_feed" alt="Live Camera Video Stream" class="video-feed">
@@ -109,6 +132,12 @@
                     </div>
 
                     <div class="ribbon-action-buttons">
+                        <button id="btnToggleRoi" class="btn btn-secondary active">
+                            <span>🎯 Conveyor ROI [ON]</span>
+                        </button>
+                        <button id="btnResetTripwire" class="btn btn-secondary">
+                            <span>↺ Reset Tripwire</span>
+                        </button>
                         <button id="btnResetLens" class="btn btn-secondary">
                             <span>↺ Reset Lens</span>
                         </button>
