@@ -35,8 +35,8 @@ print(f"Loading custom Milma YOLO model from: {custom_weights}...")
 yolo_model = YOLO(custom_weights)
 print(f"✓ Milma YOLO model ready ({len(yolo_model.names)} classes: {list(yolo_model.names.values())}).")
 
-# Detection cutoff
-confidence_cutoff = 0.20
+# Detection cutoff (tuned for zero duplicate count on shingled pouches)
+confidence_cutoff = 0.38
 
 # Hardware Camera & Lens ISP Settings
 baumer_cam: Optional[BaumerCamera] = None
@@ -53,6 +53,37 @@ lens_settings = {
     "auto_wb": True         # Auto white balance (Gray World)
 }
 
+# Conveyor ROI & ByteTrack Tripwire State
+roi_settings = {
+    "enabled": True,
+    "ymin": 0.04,
+    "xmin": 0.04,
+    "ymax": 0.96,
+    "xmax": 0.96
+}
+tripwire_settings = {
+    "enabled": True,
+    "y_norm": 0.52
+}
+# Detection and Counting Engine Filters
+detection_filters = {
+    "detect_pouches": True,
+    "detect_crates": True
+}
+
+tracker_state = {
+    "total_counted_pouches": 0,
+    "total_counted_crates": 0,
+    "pulse_frames": 0,
+    "counted_track_ids": set(),
+    "counted_crate_track_ids": set(),
+    "track_prev_positions": {},
+    "last_audit_status": "NOMINAL (20/20)",
+    "last_audit_class": "badge-pass",
+    "current_crate_pouches": 0,
+    "current_crates_count": 0
+}
+
 # Stream Frame & Telemetry State
 latest_jpeg_frame: Optional[bytes] = None
 latest_telemetry: Dict[str, Any] = {
@@ -63,7 +94,16 @@ latest_telemetry: Dict[str, Any] = {
     "lens_settings": lens_settings,
     "detected_objects": [],
     "color_distribution": {},
-    "total_detections": 0
+    "total_detections": 0,
+    "roi_enabled": True,
+    "detect_pouches": True,
+    "detect_crates": True,
+    "total_counted_pouches": 0,
+    "total_counted_crates": 0,
+    "current_crate_pouches": 0,
+    "current_crates_count": 0,
+    "last_audit_status": "NOMINAL (20/20)",
+    "last_audit_class": "badge-pass"
 }
 
 frame_cond = threading.Condition()
@@ -201,27 +241,56 @@ def classify_roi_color(roi_bgr: np.ndarray) -> Tuple[str, Tuple[int, int, int], 
 # YOLO OBJECT DETECTION & COLOR ANNOTATION
 # ==============================================================================
 def process_frame_detections(frame: np.ndarray) -> Tuple[np.ndarray, Dict[str, Any]]:
-    """Runs YOLO object detection on the enhanced frame and classifies object colors."""
+    """
+    Runs ByteTrack multi-object tracking on the enhanced frame,
+    filters candidates through Conveyor ROI Masking and user-toggled Pouch/Crate filters,
+    applies IoS containment deduplication,
+    and updates virtual tripwire crossing counters for both pouches and crates.
+    """
+    global tracker_state, roi_settings, tripwire_settings, detection_filters
     h, w = frame.shape[:2]
     annotated = frame.copy()
 
-    # Run YOLOv8 inference
-    results = yolo_model.predict(
+    # Calculate Conveyor ROI pixel bounds
+    rx1 = int(roi_settings.get("xmin", 0.04) * w)
+    ry1 = int(roi_settings.get("ymin", 0.04) * h)
+    rx2 = int(roi_settings.get("xmax", 0.96) * w)
+    ry2 = int(roi_settings.get("ymax", 0.96) * h)
+    is_roi_enabled = roi_settings.get("enabled", True)
+
+    detect_pouches = detection_filters.get("detect_pouches", True)
+    detect_crates = detection_filters.get("detect_crates", True)
+
+    # Run ByteTrack tracking with calibrated NMS IoU threshold (0.45)
+    results = yolo_model.track(
         frame,
+        tracker="bytetrack.yaml",
+        persist=True,
         imgsz=640,
         conf=confidence_cutoff,
+        iou=0.45,
         verbose=False
     )[0]
 
-    detected_items = []
-    color_dist: Dict[str, int] = {}
+    track_ids = results.boxes.id if results.boxes is not None else None
 
+    raw_candidates = []
     if results.boxes is not None:
-        for b in results.boxes:
+        for idx, b in enumerate(results.boxes):
             x1, y1, x2, y2 = [int(v) for v in b.xyxy[0]]
             cls_id = int(b.cls[0])
             obj_name = yolo_model.names[cls_id]
             conf = float(b.conf[0])
+            tid = int(track_ids[idx].item()) if (track_ids is not None and len(track_ids) > idx) else None
+
+            is_pouch = "pouch" in obj_name
+            is_crate = obj_name in ["crate", "empty_tray"]
+
+            # Filter candidates based on active detection toggles
+            if is_pouch and not detect_pouches:
+                continue
+            if is_crate and not detect_crates:
+                continue
 
             # Clamp bounding box
             x1, y1 = max(0, x1), max(0, y1)
@@ -229,53 +298,196 @@ def process_frame_detections(frame: np.ndarray) -> Tuple[np.ndarray, Dict[str, A
             if x2 <= x1 or y2 <= y1:
                 continue
 
-            # Color and class mapping
-            CUSTOM_CLASSES = {
-                "crate": {"bgr": (240, 110, 20), "hex": "#3b82f6", "color": "BLUE"},
-                "empty_tray": {"bgr": (0, 215, 245), "hex": "#eab308", "color": "YELLOW"},
-                "pouch_green": {"bgr": (40, 205, 50), "hex": "#22c55e", "color": "GREEN"},
-                "pouch_orange": {"bgr": (0, 135, 245), "hex": "#f97316", "color": "ORANGE"},
-                "pouch_purple": {"bgr": (210, 60, 175), "hex": "#a855f7", "color": "PURPLE"}
-            }
+            cx = (x1 + x2) // 2
+            cy = (y1 + y2) // 2
 
-            if obj_name in CUSTOM_CLASSES:
-                c_info = CUSTOM_CLASSES[obj_name]
-                color_name = c_info["color"]
-                bgr_color = c_info["bgr"]
-                hex_color = c_info["hex"]
-            else:
-                # Crop object and classify its color with fallback
-                crop = frame[y1:y2, x1:x2]
-                color_name, bgr_color, hex_color = classify_roi_color(crop)
+            # Conveyor ROI Masking: suppress perimeter clutter, hands, ambient floor
+            if is_roi_enabled and not (rx1 <= cx <= rx2 and ry1 <= cy <= ry2):
+                continue
 
-            color_dist[color_name] = color_dist.get(color_name, 0) + 1
-
-            detected_items.append({
-                "object": obj_name,
-                "color": color_name,
-                "color_hex": hex_color,
-                "bgr": bgr_color,
-                "confidence": round(conf * 100.0, 1),
-                "bbox": [x1, y1, x2, y2]
+            area = (x2 - x1) * (y2 - y1)
+            raw_candidates.append({
+                "bbox": (x1, y1, x2, y2),
+                "center": (cx, cy),
+                "conf": conf,
+                "obj_name": obj_name,
+                "track_id": tid,
+                "area": area
             })
 
-            # Draw visual annotation
-            cv2.rectangle(annotated, (x1, y1), (x2, y2), bgr_color, 2)
+    # Sort candidates by confidence descending
+    raw_candidates.sort(key=lambda it: it["conf"], reverse=True)
 
-            label = f"{obj_name.upper()} • {color_name} ({int(conf * 100)}%)"
-            font = cv2.FONT_HERSHEY_SIMPLEX
-            font_scale = 0.55 if w < 1200 else 0.70
-            thickness = 1 if w < 1200 else 2
-            (lw, lh), _ = cv2.getTextSize(label, font, font_scale, thickness)
+    # IoS (Intersection over Smaller) Containment Deduplication
+    filtered_items = []
+    for cand in raw_candidates:
+        cx1, cy1, cx2, cy2 = cand["bbox"]
+        c_area = cand["area"]
+        is_pouch = "pouch" in cand["obj_name"]
 
-            # Badge background
-            badge_y1 = max(0, y1 - lh - 8)
-            badge_y2 = max(lh + 8, y1)
-            cv2.rectangle(annotated, (x1, badge_y1), (x1 + lw + 12, badge_y2), bgr_color, -1)
+        is_dup = False
+        if is_pouch:
+            for kept in filtered_items:
+                if "pouch" not in kept["obj_name"]:
+                    continue
+                kx1, ky1, kx2, ky2 = kept["bbox"]
+                k_area = kept["area"]
+                ix1, iy1 = max(cx1, kx1), max(cy1, ky1)
+                ix2, iy2 = min(cx2, kx2), min(cy2, ky2)
+                if ix2 > ix1 and iy2 > iy1:
+                    inter = (ix2 - ix1) * (iy2 - iy1)
+                    ios = inter / min(c_area, k_area)
+                    if ios > 0.50:
+                        is_dup = True
+                        break
+        if not is_dup:
+            filtered_items.append(cand)
 
-            # Text color (contrast-aware)
-            text_color = (0, 0, 0) if color_name in ["WHITE", "YELLOW", "CYAN", "PINK"] else (255, 255, 255)
-            cv2.putText(annotated, label, (x1 + 6, max(lh + 2, y1 - 3)), font, font_scale, text_color, thickness, cv2.LINE_AA)
+    # Separate pouch vs crate items
+    pouch_items = [it for it in filtered_items if "pouch" in it["obj_name"]]
+    crate_items = [it for it in filtered_items if it["obj_name"] in ["crate", "empty_tray"]]
+
+    crate_pouch_count = len(pouch_items) if detect_pouches else 0
+    crates_in_view = len(crate_items) if detect_crates else 0
+    tracker_state["current_crate_pouches"] = crate_pouch_count
+    tracker_state["current_crates_count"] = crates_in_view
+
+    # Tripwire Line Crossing Logic
+    line_y = int(tripwire_settings.get("y_norm", 0.52) * h)
+    now_time = time.time()
+
+    # 1. Pouch crossing tracking
+    if detect_pouches:
+        for item in pouch_items:
+            tid = item["track_id"]
+            cx, cy = item["center"]
+            if tid is not None:
+                prev_info = tracker_state["track_prev_positions"].get(tid)
+                if prev_info is not None:
+                    prev_cx, prev_cy, _ = prev_info
+                    # Check crossing top to bottom (or reverse)
+                    if (prev_cy < line_y <= cy) or (prev_cy > line_y >= cy):
+                        if tid not in tracker_state["counted_track_ids"]:
+                            tracker_state["counted_track_ids"].add(tid)
+                            tracker_state["total_counted_pouches"] += 1
+                            tracker_state["pulse_frames"] = 8
+                tracker_state["track_prev_positions"][tid] = (cx, cy, now_time)
+
+    # 2. Crate crossing tracking
+    if detect_crates:
+        for item in crate_items:
+            tid = item["track_id"]
+            cx, cy = item["center"]
+            if tid is not None:
+                prev_info = tracker_state["track_prev_positions"].get(tid)
+                if prev_info is not None:
+                    prev_cx, prev_cy, _ = prev_info
+                    if (prev_cy < line_y <= cy) or (prev_cy > line_y >= cy):
+                        if tid not in tracker_state["counted_crate_track_ids"]:
+                            tracker_state["counted_crate_track_ids"].add(tid)
+                            tracker_state["total_counted_crates"] += 1
+                            tracker_state["pulse_frames"] = 8
+                tracker_state["track_prev_positions"][tid] = (cx, cy, now_time)
+
+    # Clean old tracks (> 30s)
+    if len(tracker_state["track_prev_positions"]) > 400:
+        tracker_state["track_prev_positions"] = {
+            k: v for k, v in tracker_state["track_prev_positions"].items()
+            if now_time - v[2] < 30.0
+        }
+
+    # Crate Audit Verdict
+    if not detect_pouches:
+        tracker_state["last_audit_status"] = "POUCH DETECTION PAUSED"
+        tracker_state["last_audit_class"] = "badge-warn"
+    elif crate_pouch_count == 20:
+        tracker_state["last_audit_status"] = "PASSED: NOMINAL (20/20)"
+        tracker_state["last_audit_class"] = "badge-pass"
+    elif crate_pouch_count in [18, 19]:
+        tracker_state["last_audit_status"] = f"DEFECT: UNDERFILLED ({crate_pouch_count}/20)"
+        tracker_state["last_audit_class"] = "badge-fail"
+    elif crate_pouch_count > 20:
+        tracker_state["last_audit_status"] = f"DEFECT: OVERFILLED ({crate_pouch_count}/20)"
+        tracker_state["last_audit_class"] = "badge-fail"
+    elif crate_pouch_count == 0:
+        tracker_state["last_audit_status"] = "EMPTY CONVEYOR / TRAY"
+        tracker_state["last_audit_class"] = "badge-warn"
+
+    # VISUAL OVERLAYS:
+    # 1. Conveyor ROI Mask Boundary
+    if is_roi_enabled:
+        cv2.rectangle(annotated, (rx1, ry1), (rx2, ry2), (0, 220, 255), 2)
+        cv2.putText(annotated, "[ CONVEYOR INSPECTION ROI - ACTIVE ]", (rx1 + 12, max(24, ry1 + 22)),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 220, 255), 2, cv2.LINE_AA)
+
+    # 2. Tripwire Virtual Line
+    if tripwire_settings.get("enabled", True):
+        is_pulsing = tracker_state["pulse_frames"] > 0
+        if is_pulsing:
+            tracker_state["pulse_frames"] -= 1
+        tw_color = (40, 245, 60) if is_pulsing else (0, 165, 255)
+        tw_thick = 3 if is_pulsing else 2
+        cv2.line(annotated, (rx1, line_y), (rx2, line_y), tw_color, tw_thick)
+        tw_label = f"TRIPWIRE • POUCHES: {tracker_state['total_counted_pouches']} | CRATES: {tracker_state['total_counted_crates']}"
+        cv2.putText(annotated, tw_label, (rx1 + 12, max(25, line_y - 8)),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.52, tw_color, 2, cv2.LINE_AA)
+
+    detected_items = []
+    color_dist: Dict[str, int] = {}
+
+    CUSTOM_CLASSES = {
+        "crate": {"bgr": (240, 110, 20), "hex": "#3b82f6", "color": "BLUE"},
+        "empty_tray": {"bgr": (0, 215, 245), "hex": "#eab308", "color": "YELLOW"},
+        "pouch_green": {"bgr": (40, 205, 50), "hex": "#22c55e", "color": "GREEN"},
+        "pouch_orange": {"bgr": (0, 135, 245), "hex": "#f97316", "color": "ORANGE"},
+        "pouch_purple": {"bgr": (210, 60, 175), "hex": "#a855f7", "color": "PURPLE"}
+    }
+
+    for item in filtered_items:
+        x1, y1, x2, y2 = item["bbox"]
+        obj_name = item["obj_name"]
+        conf = item["conf"]
+        tid = item["track_id"]
+
+        if obj_name in CUSTOM_CLASSES:
+            c_info = CUSTOM_CLASSES[obj_name]
+            color_name = c_info["color"]
+            bgr_color = c_info["bgr"]
+            hex_color = c_info["hex"]
+        else:
+            crop = frame[y1:y2, x1:x2]
+            color_name, bgr_color, hex_color = classify_roi_color(crop)
+
+        color_dist[color_name] = color_dist.get(color_name, 0) + 1
+
+        detected_items.append({
+            "object": obj_name,
+            "color": color_name,
+            "color_hex": hex_color,
+            "bgr": bgr_color,
+            "confidence": round(conf * 100.0, 1),
+            "track_id": tid,
+            "bbox": [x1, y1, x2, y2]
+        })
+
+        # Draw visual annotation
+        cv2.rectangle(annotated, (x1, y1), (x2, y2), bgr_color, 2)
+
+        tid_tag = f" #{tid}" if tid is not None else ""
+        label = f"{obj_name.upper()}{tid_tag} • {color_name} ({int(conf * 100)}%)"
+        font = cv2.FONT_HERSHEY_SIMPLEX
+        font_scale = 0.52 if w < 1200 else 0.65
+        thickness = 1 if w < 1200 else 2
+        (lw, lh), _ = cv2.getTextSize(label, font, font_scale, thickness)
+
+        # Badge background
+        badge_y1 = max(0, y1 - lh - 8)
+        badge_y2 = max(lh + 8, y1)
+        cv2.rectangle(annotated, (x1, badge_y1), (x1 + lw + 12, badge_y2), bgr_color, -1)
+
+        # Text color (contrast-aware)
+        text_color = (0, 0, 0) if color_name in ["WHITE", "YELLOW", "CYAN", "PINK"] else (255, 255, 255)
+        cv2.putText(annotated, label, (x1 + 6, max(lh + 2, y1 - 3)), font, font_scale, text_color, thickness, cv2.LINE_AA)
 
     # Top HUD Bar
     hud_h = 50 if h < 1000 else 64
@@ -284,15 +496,17 @@ def process_frame_detections(frame: np.ndarray) -> Tuple[np.ndarray, Dict[str, A
 
     hud_font = cv2.FONT_HERSHEY_SIMPLEX
     hud_scale = 0.6 if w < 1200 else 0.75
-    cv2.putText(annotated, "VISION AI • OBJECT & COLOR DETECTOR", (18, int(hud_h * 0.65)),
-                hud_font, hud_scale, (0, 210, 255), 2, cv2.LINE_AA)
+    cv2.putText(annotated, "MILMA VISION AI • BYTETRACK & ROI INSPECTION", (18, int(hud_h * 0.65)),
+                hud_font, hud_scale, (0, 215, 255), 2, cv2.LINE_AA)
 
     # Tally in HUD
     tally_items = [f"{k}: {v}" for k, v in sorted(color_dist.items())]
-    tally_str = f"Objects: {len(detected_items)}" + (f" | {' • '.join(tally_items)}" if tally_items else " | Scanning...")
-    (tw, th), _ = cv2.getTextSize(tally_str, hud_font, hud_scale * 0.75, 1)
+    pouch_status_str = f"Pouches: {crate_pouch_count}/20" if detect_pouches else "Pouches: OFF"
+    crate_status_str = f"Crates: {crates_in_view}" if detect_crates else "Crates: OFF"
+    tally_str = f"{pouch_status_str} | {crate_status_str}" + (f" | {' • '.join(tally_items)}" if tally_items else "")
+    (tw, th), _ = cv2.getTextSize(tally_str, hud_font, hud_scale * 0.72, 1)
     cv2.putText(annotated, tally_str, (w - tw - 18, int(hud_h * 0.65)),
-                hud_font, hud_scale * 0.75, (220, 220, 220), 1, cv2.LINE_AA)
+                hud_font, hud_scale * 0.72, (220, 220, 220), 1, cv2.LINE_AA)
 
     telemetry = {
         "detected_objects": [
@@ -301,12 +515,23 @@ def process_frame_detections(frame: np.ndarray) -> Tuple[np.ndarray, Dict[str, A
                 "color": it["color"],
                 "color_hex": it["color_hex"],
                 "confidence": it["confidence"],
+                "track_id": it.get("track_id"),
                 "bbox": it["bbox"]
             }
             for it in detected_items
         ],
         "color_distribution": color_dist,
-        "total_detections": len(detected_items)
+        "total_detections": len(detected_items),
+        "detect_pouches": detect_pouches,
+        "detect_crates": detect_crates,
+        "current_crate_pouches": crate_pouch_count,
+        "total_counted_pouches": tracker_state["total_counted_pouches"],
+        "current_crates_count": crates_in_view,
+        "total_counted_crates": tracker_state["total_counted_crates"],
+        "last_audit_status": tracker_state["last_audit_status"],
+        "last_audit_class": tracker_state["last_audit_class"],
+        "roi_enabled": is_roi_enabled,
+        "active_tracks_count": len(tracker_state["track_prev_positions"])
     }
 
     return annotated, telemetry
@@ -466,7 +691,17 @@ def video_capture_worker():
                         "lens_settings": dict(lens_settings),
                         "detected_objects": telemetry["detected_objects"],
                         "color_distribution": telemetry["color_distribution"],
-                        "total_detections": telemetry["total_detections"]
+                        "total_detections": telemetry["total_detections"],
+                        "detect_pouches": telemetry["detect_pouches"],
+                        "detect_crates": telemetry["detect_crates"],
+                        "current_crate_pouches": telemetry["current_crate_pouches"],
+                        "total_counted_pouches": telemetry["total_counted_pouches"],
+                        "current_crates_count": telemetry["current_crates_count"],
+                        "total_counted_crates": telemetry["total_counted_crates"],
+                        "last_audit_status": telemetry["last_audit_status"],
+                        "last_audit_class": telemetry["last_audit_class"],
+                        "roi_enabled": telemetry["roi_enabled"],
+                        "active_tracks_count": telemetry["active_tracks_count"]
                     })
                     frame_cond.notify_all()
         else:
@@ -598,6 +833,57 @@ def set_lens():
         lens_settings["auto_wb"] = bool(data["auto_wb"])
 
     return jsonify({"lens_settings": lens_settings})
+
+
+@app.route('/api/toggle_roi', methods=['POST'])
+def toggle_roi():
+    """Toggle conveyor inspection ROI on/off."""
+    global roi_settings
+    data = request.json or {}
+    if "enabled" in data:
+        roi_settings["enabled"] = bool(data["enabled"])
+    else:
+        roi_settings["enabled"] = not roi_settings["enabled"]
+    return jsonify({"roi_enabled": roi_settings["enabled"]})
+
+
+@app.route('/api/toggle_detection', methods=['POST'])
+def toggle_detection():
+    """Toggle pouch or crate detection & count engine on/off."""
+    global detection_filters
+    data = request.json or {}
+    target = data.get("target", "").lower()
+
+    if target in ["pouch", "pouches"]:
+        if "enabled" in data:
+            detection_filters["detect_pouches"] = bool(data["enabled"])
+        else:
+            detection_filters["detect_pouches"] = not detection_filters["detect_pouches"]
+    elif target in ["crate", "crates"]:
+        if "enabled" in data:
+            detection_filters["detect_crates"] = bool(data["enabled"])
+        else:
+            detection_filters["detect_crates"] = not detection_filters["detect_crates"]
+
+    return jsonify({
+        "detect_pouches": detection_filters["detect_pouches"],
+        "detect_crates": detection_filters["detect_crates"]
+    })
+
+
+@app.route('/api/reset_tripwire', methods=['POST'])
+def reset_tripwire():
+    """Resets persistent tripwire pouch and crate counts."""
+    global tracker_state
+    tracker_state["total_counted_pouches"] = 0
+    tracker_state["total_counted_crates"] = 0
+    tracker_state["counted_track_ids"].clear()
+    tracker_state["counted_crate_track_ids"].clear()
+    tracker_state["track_prev_positions"].clear()
+    return jsonify({
+        "total_counted_pouches": 0,
+        "total_counted_crates": 0
+    })
 
 
 if __name__ == '__main__':

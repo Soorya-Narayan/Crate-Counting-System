@@ -621,3 +621,175 @@ body {
 .font-mono {
     font-family: var(--font-mono);
 }
+
+/* Conveyor Tripwire & Audit KPI Bar */
+.audit-tracking-bar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    background: linear-gradient(90deg, rgba(16, 24, 39, 0.95), rgba(15, 23, 42, 0.95));
+    border: 1px solid rgba(0, 215, 255, 0.25);
+    border-radius: 10px;
+    padding: 10px 18px;
+    margin-bottom: 12px;
+    box-shadow: 0 4px 14px rgba(0, 0, 0, 0.35);
+}
+
+.audit-kpi {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+}
+
+.audit-kpi .kpi-label {
+    font-size: 0.72rem;
+    font-weight: 700;
+    color: var(--text-muted);
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+}
+
+.audit-kpi .kpi-value {
+    font-size: 1.05rem;
+    font-weight: 800;
+    color: #fff;
+}
+
+.audit-divider {
+    width: 1px;
+    height: 32px;
+    background: rgba(255, 255, 255, 0.1);
+}
+
+.text-neon {
+    color: #00e5ff !important;
+    text-shadow: 0 0 10px rgba(0, 229, 255, 0.6);
+}
+
+.badge-pass {
+    display: inline-block;
+    padding: 3px 10px;
+    background: rgba(34, 197, 94, 0.18);
+    border: 1px solid #22c55e;
+    color: #4ade80 !important;
+    border-radius: 6px;
+    font-size: 0.85rem;
+    font-weight: 800;
+    letter-spacing: 0.04em;
+    box-shadow: 0 0 10px rgba(34, 197, 94, 0.3);
+}
+
+.badge-fail {
+    display: inline-block;
+    padding: 3px 10px;
+    background: rgba(239, 68, 68, 0.18);
+    border: 1px solid #ef4444;
+    color: #f87171 !important;
+    border-radius: 6px;
+    font-size: 0.85rem;
+    font-weight: 800;
+    letter-spacing: 0.04em;
+    box-shadow: 0 0 10px rgba(239, 68, 68, 0.3);
+}
+
+.badge-warn {
+    display: inline-block;
+    padding: 3px 10px;
+    background: rgba(234, 179, 8, 0.18);
+    border: 1px solid #eab308;
+    color: #facc15 !important;
+    border-radius: 6px;
+    font-size: 0.85rem;
+    font-weight: 800;
+    letter-spacing: 0.04em;
+    box-shadow: 0 0 10px rgba(234, 179, 8, 0.3);
+}
+
+.text-cyan {
+    color: #06b6d4 !important;
+}
+
+.text-amber {
+    color: #f59e0b !important;
+}
+
+.text-orange {
+    color: #f97316 !important;
+    text-shadow: 0 0 10px rgba(249, 115, 22, 0.4);
+}
+
+/* Detection Engine Quick Toggles in Header */
+.detection-toggle-group {
+    display: flex;
+    background: var(--bg-surface-3);
+    padding: 3px;
+    border-radius: 8px;
+    border: 1px solid var(--border-subtle);
+    gap: 4px;
+}
+
+.btn-quick-toggle {
+    background: transparent;
+    border: 1px solid transparent;
+    color: var(--text-muted);
+    font-size: 0.78rem;
+    font-weight: 600;
+    padding: 5px 11px;
+    border-radius: 6px;
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.btn-quick-toggle:hover {
+    color: var(--text-primary);
+    background: rgba(255, 255, 255, 0.05);
+}
+
+.btn-quick-toggle.active {
+    background: rgba(16, 185, 129, 0.2);
+    border-color: rgba(16, 185, 129, 0.5);
+    color: #34d399;
+    box-shadow: 0 0 10px rgba(16, 185, 129, 0.25);
+}
+
+.btn-quick-toggle.inactive {
+    background: rgba(239, 68, 68, 0.12);
+    border-color: rgba(239, 68, 68, 0.4);
+    color: #f87171;
+}
+
+/* Dedicated Detection & Counting Toggle Buttons in Ribbon */
+.btn-detection {
+    font-weight: 600;
+    letter-spacing: 0.02em;
+    padding: 7px 14px;
+    border-radius: 6px;
+    transition: all 0.22s ease-in-out;
+}
+
+.btn-detection.btn-pouch.active {
+    background: rgba(6, 182, 212, 0.18);
+    border: 1px solid #06b6d4;
+    color: #22d3ee;
+    box-shadow: 0 0 12px rgba(6, 182, 212, 0.35);
+}
+
+.btn-detection.btn-crate.active {
+    background: rgba(249, 115, 22, 0.18);
+    border: 1px solid #f97316;
+    color: #fb923c;
+    box-shadow: 0 0 12px rgba(249, 115, 22, 0.35);
+}
+
+.btn-detection.inactive {
+    background: rgba(15, 23, 42, 0.8);
+    border: 1px solid rgba(239, 68, 68, 0.4);
+    color: #94a3b8;
+    opacity: 0.8;
+}
+
+.btn-detection.inactive span {
+    text-decoration: line-through;
+    color: #ef4444;
+}
+
