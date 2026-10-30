@@ -64,13 +64,41 @@ class BaumerCamera:
         self.current_exposure_us = 25000  # Default 25 ms
         self._lock = threading.Lock()
 
+    def get_effective_host_ip(self) -> str:
+        """Determines the local IP address through which the camera is reachable."""
+        try:
+            s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            s.connect((self.camera_ip, 3956))
+            local_ip = s.getsockname()[0]
+            s.close()
+            if local_ip and not local_ip.startswith("127."):
+                return local_ip
+        except Exception:
+            pass
+        return self.host_ip or "169.254.128.78"
+
     def connect(self):
         """Connect to camera via GVCP and claim control privilege."""
         with self._lock:
             if self.client is not None:
                 return True
+
+            # Probe for any online GigE Vision cameras on the network
+            try:
+                discovered = gv.GVCPClient.discover(timeout=0.4)
+                if discovered:
+                    # Prefer specified IP, else first discovered camera
+                    target = next((c for c in discovered if c.get("ip") == self.camera_ip), discovered[0])
+                    print(f"✓ Discovered GigE camera: {target.get('model', 'Baumer')} at {target['ip']}")
+                    self.camera_ip = target["ip"]
+                    if target.get("interface_ip"):
+                        self.host_ip = target["interface_ip"]
+            except Exception as e:
+                logger.debug(f"Discovery probe: {e}")
+
             print(f"Connecting to Baumer VCXG.2-32C at {self.camera_ip}...")
-            self.client = gv.GVCPClient(self.camera_ip, local_ip=self.host_ip, timeout=2.0)
+            # Use empty local_ip so the OS binds cleanly to 0.0.0.0 without Errno 49
+            self.client = gv.GVCPClient(self.camera_ip, local_ip="", timeout=2.0)
             self.client.connect()
             print("✓ Connected. Acquired CCP control.")
 
@@ -103,9 +131,10 @@ class BaumerCamera:
             if self.is_streaming:
                 return
 
-            print("Configuring Stream Channel 0 and starting receiver...")
+            effective_host = self.get_effective_host_ip()
+            print(f"Configuring Stream Channel 0 -> Host IP {effective_host}...")
             self.receiver = gv.GVSPReceiver(
-                local_ip=self.host_ip,
+                local_ip="",
                 camera_ip=self.camera_ip,
                 packet_size=self.packet_size,
                 initial_packet_timeout=0.015,
@@ -115,7 +144,7 @@ class BaumerCamera:
 
             # Stream Channel 0 config
             self.client.write_reg(REG_HEARTBEAT_TIMEOUT, 3000)
-            self.client.write_reg(REG_SC_DEST_ADDR, ip_to_uint32(self.host_ip))
+            self.client.write_reg(REG_SC_DEST_ADDR, ip_to_uint32(effective_host))
             self.client.write_reg(REG_SC_HOST_PORT, self.receiver.port)
             self.client.write_reg(REG_SC_PACKET_SIZE, self.packet_size)
             self.client.write_reg(REG_SC_PACKET_DELAY, self.packet_delay)
