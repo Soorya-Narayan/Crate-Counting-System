@@ -32,6 +32,12 @@
                     <button id="btnSrcSim" class="btn-source">Test Feed</button>
                 </div>
 
+                <!-- Detection Engine Quick Toggles -->
+                <div class="detection-toggle-group">
+                    <button id="btnQuickTogglePouches" class="btn-quick-toggle active" title="Toggle Pouch Detection & Count">🥛 Pouches: ON</button>
+                    <button id="btnQuickToggleCrates" class="btn-quick-toggle active" title="Toggle Crate Detection & Count">📦 Crates: ON</button>
+                </div>
+
                 <!-- Camera Status Pill -->
                 <div class="status-pill" id="camStatusPill">
                     <span class="status-dot"></span>
@@ -67,12 +73,22 @@
                     <div class="audit-divider"></div>
                     <div class="audit-kpi">
                         <span class="kpi-label">POUCHES IN CRATE</span>
-                        <span class="kpi-value font-mono" id="cratePouchesCount">0 / 20</span>
+                        <span class="kpi-value font-mono text-cyan" id="cratePouchesCount">0 / 20</span>
                     </div>
                     <div class="audit-divider"></div>
                     <div class="audit-kpi">
-                        <span class="kpi-label">TRIPWIRE CROSSED</span>
+                        <span class="kpi-label">POUCHES CROSSED</span>
                         <span class="kpi-value font-mono text-neon" id="tripwireCrossedCount">0</span>
+                    </div>
+                    <div class="audit-divider"></div>
+                    <div class="audit-kpi">
+                        <span class="kpi-label">CRATES IN VIEW</span>
+                        <span class="kpi-value font-mono text-amber" id="cratesInViewCount">0</span>
+                    </div>
+                    <div class="audit-divider"></div>
+                    <div class="audit-kpi">
+                        <span class="kpi-label">CRATES CROSSED</span>
+                        <span class="kpi-value font-mono text-orange" id="cratesCrossedCount">0</span>
                     </div>
                     <div class="audit-divider"></div>
                     <div class="audit-kpi">
@@ -132,19 +148,25 @@
                     </div>
 
                     <div class="ribbon-action-buttons">
-                        <button id="btnToggleRoi" class="btn btn-secondary active">
+                        <button id="btnTogglePouches" class="btn btn-detection btn-pouch active" title="Toggle Pouch Detection & Tripwire Count">
+                            <span>🥛 Pouches: ON</span>
+                        </button>
+                        <button id="btnToggleCrates" class="btn btn-detection btn-crate active" title="Toggle Crate Detection & Tripwire Count">
+                            <span>📦 Crates: ON</span>
+                        </button>
+                        <button id="btnToggleRoi" class="btn btn-secondary active" title="Toggle Conveyor ROI Inspection Boundary">
                             <span>🎯 Conveyor ROI [ON]</span>
                         </button>
-                        <button id="btnResetTripwire" class="btn btn-secondary">
-                            <span>↺ Reset Tripwire</span>
+                        <button id="btnResetTripwire" class="btn btn-secondary" title="Reset Tripwire Pouch and Crate Counters">
+                            <span>↺ Reset Counts</span>
                         </button>
-                        <button id="btnResetLens" class="btn btn-secondary">
+                        <button id="btnResetLens" class="btn btn-secondary" title="Reset Lens Settings to Defaults">
                             <span>↺ Reset Lens</span>
                         </button>
-                        <button id="btnSnapshot" class="btn btn-secondary">
+                        <button id="btnSnapshot" class="btn btn-secondary" title="Download High-Res Snapshot">
                             <span>📸 Capture JPEG</span>
                         </button>
-                        <button id="btnFullscreen" class="btn btn-secondary">
+                        <button id="btnFullscreen" class="btn btn-secondary" title="Toggle Fullscreen">
                             <span>⛶ Fullscreen</span>
                         </button>
                     </div>

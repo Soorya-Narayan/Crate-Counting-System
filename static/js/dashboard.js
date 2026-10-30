@@ -33,7 +33,11 @@ document.addEventListener('DOMContentLoaded', () => {
     const confRange = document.getElementById('confRange');
     const confVal = document.getElementById('confVal');
 
-    // Action Buttons
+    // Action & Toggle Buttons
+    const btnTogglePouches = document.getElementById('btnTogglePouches');
+    const btnToggleCrates = document.getElementById('btnToggleCrates');
+    const btnQuickTogglePouches = document.getElementById('btnQuickTogglePouches');
+    const btnQuickToggleCrates = document.getElementById('btnQuickToggleCrates');
     const btnToggleRoi = document.getElementById('btnToggleRoi');
     const btnResetTripwire = document.getElementById('btnResetTripwire');
     const btnResetLens = document.getElementById('btnResetLens');
@@ -44,6 +48,8 @@ document.addEventListener('DOMContentLoaded', () => {
     const crateAuditBadge = document.getElementById('crateAuditBadge');
     const cratePouchesCount = document.getElementById('cratePouchesCount');
     const tripwireCrossedCount = document.getElementById('tripwireCrossedCount');
+    const cratesInViewCount = document.getElementById('cratesInViewCount');
+    const cratesCrossedCount = document.getElementById('cratesCrossedCount');
     const activeTracksCount = document.getElementById('activeTracksCount');
 
     // Detections & Color Palettes
@@ -150,15 +156,58 @@ document.addEventListener('DOMContentLoaded', () => {
             crateAuditBadge.textContent = data.last_audit_status;
             crateAuditBadge.className = data.last_audit_class || 'badge-pass';
         }
-        if (cratePouchesCount && data.current_crate_pouches !== undefined) {
-            cratePouchesCount.textContent = `${data.current_crate_pouches} / 20`;
+
+        // Pouch detection and counts
+        const isPouchActive = data.detect_pouches !== false;
+        if (cratePouchesCount) {
+            cratePouchesCount.textContent = isPouchActive ? `${data.current_crate_pouches || 0} / 20` : 'PAUSED';
+            cratePouchesCount.style.opacity = isPouchActive ? '1' : '0.5';
         }
         if (tripwireCrossedCount && data.total_counted_pouches !== undefined) {
             tripwireCrossedCount.textContent = (data.total_counted_pouches).toLocaleString();
+            tripwireCrossedCount.style.opacity = isPouchActive ? '1' : '0.5';
         }
+
+        // Crate detection and counts
+        const isCrateActive = data.detect_crates !== false;
+        if (cratesInViewCount) {
+            cratesInViewCount.textContent = isCrateActive ? (data.current_crates_count || 0) : 'PAUSED';
+            cratesInViewCount.style.opacity = isCrateActive ? '1' : '0.5';
+        }
+        if (cratesCrossedCount && data.total_counted_crates !== undefined) {
+            cratesCrossedCount.textContent = (data.total_counted_crates).toLocaleString();
+            cratesCrossedCount.style.opacity = isCrateActive ? '1' : '0.5';
+        }
+
         if (activeTracksCount && data.active_tracks_count !== undefined) {
             activeTracksCount.textContent = data.active_tracks_count;
         }
+
+        // Sync Ribbon & Header Toggle Button States
+        if (btnTogglePouches) {
+            btnTogglePouches.classList.toggle('active', isPouchActive);
+            btnTogglePouches.classList.toggle('inactive', !isPouchActive);
+            const span = btnTogglePouches.querySelector('span');
+            if (span) span.textContent = isPouchActive ? '🥛 Pouches: ON' : '🥛 Pouches: OFF';
+        }
+        if (btnQuickTogglePouches) {
+            btnQuickTogglePouches.classList.toggle('active', isPouchActive);
+            btnQuickTogglePouches.classList.toggle('inactive', !isPouchActive);
+            btnQuickTogglePouches.textContent = isPouchActive ? '🥛 Pouches: ON' : '🥛 Pouches: OFF';
+        }
+
+        if (btnToggleCrates) {
+            btnToggleCrates.classList.toggle('active', isCrateActive);
+            btnToggleCrates.classList.toggle('inactive', !isCrateActive);
+            const span = btnToggleCrates.querySelector('span');
+            if (span) span.textContent = isCrateActive ? '📦 Crates: ON' : '📦 Crates: OFF';
+        }
+        if (btnQuickToggleCrates) {
+            btnQuickToggleCrates.classList.toggle('active', isCrateActive);
+            btnQuickToggleCrates.classList.toggle('inactive', !isCrateActive);
+            btnQuickToggleCrates.textContent = isCrateActive ? '📦 Crates: ON' : '📦 Crates: OFF';
+        }
+
         if (btnToggleRoi && data.roi_enabled !== undefined) {
             btnToggleRoi.classList.toggle('active', data.roi_enabled);
             const span = btnToggleRoi.querySelector('span');
@@ -364,6 +413,48 @@ document.addEventListener('DOMContentLoaded', () => {
         });
         fetchStatus();
     });
+
+    // Helper: Toggle Pouch or Crate Detection Engines
+    async function toggleDetection(target) {
+        try {
+            const res = await fetch('/api/toggle_detection', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ target })
+            });
+            if (res.ok) {
+                const data = await res.json();
+                if (target === 'pouch' && btnTogglePouches) {
+                    btnTogglePouches.classList.toggle('active', data.detect_pouches);
+                    btnTogglePouches.classList.toggle('inactive', !data.detect_pouches);
+                    const s = btnTogglePouches.querySelector('span');
+                    if (s) s.textContent = data.detect_pouches ? '🥛 Pouches: ON' : '🥛 Pouches: OFF';
+                }
+                if (target === 'crate' && btnToggleCrates) {
+                    btnToggleCrates.classList.toggle('active', data.detect_crates);
+                    btnToggleCrates.classList.toggle('inactive', !data.detect_crates);
+                    const s = btnToggleCrates.querySelector('span');
+                    if (s) s.textContent = data.detect_crates ? '📦 Crates: ON' : '📦 Crates: OFF';
+                }
+            }
+            fetchStatus();
+        } catch (e) {
+            console.error(`Error toggling ${target} detection:`, e);
+        }
+    }
+
+    if (btnTogglePouches) {
+        btnTogglePouches.addEventListener('click', () => toggleDetection('pouch'));
+    }
+    if (btnQuickTogglePouches) {
+        btnQuickTogglePouches.addEventListener('click', () => toggleDetection('pouch'));
+    }
+    if (btnToggleCrates) {
+        btnToggleCrates.addEventListener('click', () => toggleDetection('crate'));
+    }
+    if (btnQuickToggleCrates) {
+        btnQuickToggleCrates.addEventListener('click', () => toggleDetection('crate'));
+    }
 
     // Toggle Conveyor ROI
     if (btnToggleRoi) {

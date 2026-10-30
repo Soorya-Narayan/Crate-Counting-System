@@ -87,6 +87,8 @@ def main():
 
     conf_thresh = args.conf
     iou_thresh = args.iou
+    detect_pouches = True
+    detect_crates = True
     fps_history = []
     prev_time = time.time()
     snapshot_dir = "snapshots"
@@ -127,6 +129,7 @@ def main():
 
             counts = {k: 0 for k in CLASS_CONFIG.keys()}
             total_pouches = 0
+            total_crates = 0
 
             raw_boxes = []
             if results.boxes is not None:
@@ -135,6 +138,16 @@ def main():
                     cls_id = int(b.cls[0])
                     conf = float(b.conf[0])
                     class_name = model.names[cls_id]
+
+                    is_pouch = "pouch" in class_name
+                    is_crate = class_name in ["crate", "empty_tray"]
+
+                    # Filter based on active toggles
+                    if is_pouch and not detect_pouches:
+                        continue
+                    if is_crate and not detect_crates:
+                        continue
+
                     area = (x2 - x1) * (y2 - y1)
                     raw_boxes.append({
                         "bbox": (x1, y1, x2, y2),
@@ -184,17 +197,19 @@ def main():
                     counts[class_name] += 1
                 if "pouch" in class_name:
                     total_pouches += 1
+                if class_name in ["crate", "empty_tray"]:
+                    total_crates += 1
 
                 # Bounding Box
                 cv2.rectangle(annotated, (x1, y1), (x2, y2), bgr, 2)
 
-                    # Badge
-                    label = f"{class_name.upper()} {int(conf * 100)}%"
-                    font = cv2.FONT_HERSHEY_SIMPLEX
-                    (lw, lh), _ = cv2.getTextSize(label, font, 0.55, 1)
-                    badge_y1 = max(0, y1 - lh - 8)
-                    cv2.rectangle(annotated, (x1, badge_y1), (x1 + lw + 8, y1), bgr, -1)
-                    cv2.putText(annotated, label, (x1 + 4, y1 - 4), font, 0.55, (255, 255, 255), 1, cv2.LINE_AA)
+                # Badge
+                label = f"{class_name.upper()} {int(conf * 100)}%"
+                font = cv2.FONT_HERSHEY_SIMPLEX
+                (lw, lh), _ = cv2.getTextSize(label, font, 0.55, 1)
+                badge_y1 = max(0, y1 - lh - 8)
+                cv2.rectangle(annotated, (x1, badge_y1), (x1 + lw + 8, y1), bgr, -1)
+                cv2.putText(annotated, label, (x1 + 4, y1 - 4), font, 0.55, (255, 255, 255), 1, cv2.LINE_AA)
 
             # --- HUD OVERLAYS ---
             # Top Banner
@@ -208,10 +223,12 @@ def main():
             cv2.putText(annotated, "MILMA AI VISION • LIVE MAC CAMERA", (16, 36),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.75, (0, 215, 255), 2, cv2.LINE_AA)
 
-            hud_right = f"FPS: {avg_fps:.1f} | Conf: {int(conf_thresh * 100)}% | Model: milma_best.pt"
-            (rw, _), _ = cv2.getTextSize(hud_right, cv2.FONT_HERSHEY_SIMPLEX, 0.55, 1)
+            pouch_mode = "ON" if detect_pouches else "OFF"
+            crate_mode = "ON" if detect_crates else "OFF"
+            hud_right = f"FPS: {avg_fps:.1f} | Pouches [p]: {pouch_mode} | Crates [c]: {crate_mode} | Conf: {int(conf_thresh * 100)}%"
+            (rw, _), _ = cv2.getTextSize(hud_right, cv2.FONT_HERSHEY_SIMPLEX, 0.52, 1)
             cv2.putText(annotated, hud_right, (w - rw - 16, 35),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.55, (200, 210, 225), 1, cv2.LINE_AA)
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.52, (200, 210, 225), 1, cv2.LINE_AA)
 
             # Bottom Tally Strip
             tally_h = 44
@@ -221,16 +238,11 @@ def main():
             cv2.addWeighted(t_overlay, 0.85, annotated, 0.15, 0, annotated)
             cv2.line(annotated, (0, tally_y), (w, tally_y), (60, 68, 80), 1)
 
-            tally_txt = (
-                f"TOTAL POUCHES: {total_pouches}  |  "
-                f"Orange: {counts['pouch_orange']}  |  "
-                f"Green: {counts['pouch_green']}  |  "
-                f"Purple: {counts['pouch_purple']}  |  "
-                f"Crates: {counts['crate']}  |  "
-                f"Empty Trays: {counts['empty_tray']}"
-            )
+            pouch_str = f"POUCHES: {total_pouches} (O:{counts['pouch_orange']} G:{counts['pouch_green']} P:{counts['pouch_purple']})" if detect_pouches else "POUCHES: [OFF]"
+            crate_str = f"CRATES: {total_crates} (Trays:{counts['empty_tray']})" if detect_crates else "CRATES: [OFF]"
+            tally_txt = f"{pouch_str}  |  {crate_str}  |  Keys: [p] Pouch [c] Crate [s] Snapshot [+/-] Conf"
             cv2.putText(annotated, tally_txt, (16, h - 14),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.60, (255, 255, 255), 2, cv2.LINE_AA)
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.55, (255, 255, 255), 2, cv2.LINE_AA)
 
             cv2.imshow("Milma AI - Mac Camera Live Detection", annotated)
 
@@ -238,6 +250,12 @@ def main():
             if key == 27 or key == ord('q'):
                 print("Exiting live stream...")
                 break
+            elif key == ord('p'):
+                detect_pouches = not detect_pouches
+                print(f"🥛 Pouch Detection & Count: {'ENABLED' if detect_pouches else 'DISABLED'}")
+            elif key == ord('c'):
+                detect_crates = not detect_crates
+                print(f"📦 Crate Detection & Count: {'ENABLED' if detect_crates else 'DISABLED'}")
             elif key == ord('s'):
                 ts = datetime.now().strftime("%Y%m%d_%H%M%S")
                 snap_path = os.path.join(snapshot_dir, f"mac_camera_snap_{ts}.jpg")
