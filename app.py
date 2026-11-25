@@ -537,6 +537,54 @@ def process_frame_detections(frame: np.ndarray) -> Tuple[np.ndarray, Dict[str, A
     return annotated, telemetry
 
 
+def make_baumer_standby_frame(error_msg: str = "") -> np.ndarray:
+    """Renders a sleek, animated diagnostic screen when Baumer GigE camera is searching/offline."""
+    w, h = 1280, 720
+    frame = np.zeros((h, w, 3), dtype=np.uint8)
+    frame[:] = (18, 22, 28)
+
+    # Technical grid
+    for gx in range(0, w, 64):
+        cv2.line(frame, (gx, 0), (gx, h), (26, 32, 42), 1)
+    for gy in range(0, h, 64):
+        cv2.line(frame, (0, gy), (w, gy), (26, 32, 42), 1)
+
+    # Center card
+    cv2.rectangle(frame, (120, 80), (w - 120, h - 80), (28, 35, 48), -1)
+    cv2.rectangle(frame, (120, 80), (w - 120, h - 80), (0, 180, 255), 2)
+
+    # Header
+    cv2.putText(frame, "BAUMER VCXG.2-32C • GIGE MACHINE VISION", (160, 140),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.82, (0, 220, 255), 2, cv2.LINE_AA)
+    cv2.line(frame, (160, 160), (w - 160, 160), (50, 65, 85), 1)
+
+    # Pulsing search indicator
+    dots = "." * (int(time.time() * 2) % 4 + 1)
+    cv2.putText(frame, f"SEARCHING FOR CAMERA ON NETWORK{dots}", (160, 215),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.72, (255, 255, 255), 2, cv2.LINE_AA)
+
+    cv2.putText(frame, "Target IP: 169.254.123.85 (GigE Vision UDP Port 3956)", (160, 255),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.55, (160, 175, 195), 1, cv2.LINE_AA)
+
+    # Hardware checklist
+    checklist = [
+        ("1. CAMERA POWER", "Baumer requires 12V-24V DC on 8-pin plug (or PoE Injector).", (240, 200, 80)),
+        ("2. RJ45 LINK LED", "Ethernet jack on camera MUST show solid/blinking Green LED.", (40, 220, 80)),
+        ("3. MAC ADAPTER", "MacBook Pro requires USB-C to Ethernet adapter in Thunderbolt port.", (240, 140, 80)),
+        ("4. DIAGNOSTIC", error_msg or "Waiting for physical Ethernet carrier / link-local ARP...", (120, 170, 255))
+    ]
+
+    y_pos = 320
+    for title, desc, col in checklist:
+        cv2.putText(frame, f"• {title}:", (160, y_pos), cv2.FONT_HERSHEY_SIMPLEX, 0.55, col, 2, cv2.LINE_AA)
+        cv2.putText(frame, desc, (360, y_pos), cv2.FONT_HERSHEY_SIMPLEX, 0.52, (220, 225, 235), 1, cv2.LINE_AA)
+        y_pos += 46
+
+    cv2.putText(frame, "Milma Vision AI Engine • Continuous auto-reconnect active", (160, h - 110),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.48, (120, 135, 155), 1, cv2.LINE_AA)
+    return frame
+
+
 # ==============================================================================
 # BACKGROUND VIDEO CAPTURE WORKER
 # ==============================================================================
@@ -548,9 +596,12 @@ def video_capture_worker():
     fps_count = 0
     fps_timer = time.time()
     current_fps = 0.0
+    baumer_last_error = ""
+    last_baumer_attempt = 0.0
 
     while True:
         frame = None
+        is_baumer_standby = False
 
         if camera_source == "baumer":
             if webcam_cap is not None:
@@ -560,7 +611,9 @@ def video_capture_worker():
                     pass
                 webcam_cap = None
 
-            if baumer_cam is None:
+            now_s = time.time()
+            if baumer_cam is None and (now_s - last_baumer_attempt > 2.0):
+                last_baumer_attempt = now_s
                 try:
                     print("Connecting to Baumer VCXG.2-32C at 169.254.123.85...")
                     cam = BaumerCamera(camera_ip="169.254.123.85", host_ip="169.254.128.78")
@@ -569,20 +622,25 @@ def video_capture_worker():
                     cam.start_stream()
                     baumer_cam = cam
                     baumer_connected = True
+                    baumer_last_error = ""
                     print("✓ Baumer camera online and streaming.")
                 except Exception as e:
+                    baumer_last_error = str(e)
                     logger.warning(f"Baumer connection: {e}")
                     baumer_connected = False
-                    time.sleep(2.0)
-                    continue
 
-            # Fetch raw frame from Baumer camera
-            raw_frame, info = baumer_cam.get_frame(timeout=0.6)
-            if raw_frame is not None:
-                # Run Lens Color Enhancement (White Balance + Tone Mapping + Vibrancy)
-                frame = enhance_lens_frame(raw_frame)
-            else:
-                time.sleep(0.01)
+            if baumer_cam is not None and baumer_connected:
+                raw_frame, info = baumer_cam.get_frame(timeout=0.4)
+                if raw_frame is not None:
+                    frame = enhance_lens_frame(raw_frame)
+                else:
+                    time.sleep(0.01)
+
+            # If not yet streaming from Baumer, show standby diagnostic screen
+            if frame is None:
+                frame = make_baumer_standby_frame(baumer_last_error)
+                is_baumer_standby = True
+                time.sleep(0.08)
 
         elif camera_source == "webcam":
             if baumer_cam is not None:
@@ -667,8 +725,26 @@ def video_capture_worker():
                 fps_count = 0
                 fps_timer = now
 
-            # Run Object Detection & Color Classification
-            annotated_frame, telemetry = process_frame_detections(frame)
+            # Run Object Detection & Color Classification (skip on standby diagnostic screen)
+            if is_baumer_standby:
+                annotated_frame = frame
+                telemetry = {
+                    "detected_objects": [],
+                    "color_distribution": {},
+                    "total_detections": 0,
+                    "detect_pouches": detection_filters.get("detect_pouches", True),
+                    "detect_crates": detection_filters.get("detect_crates", True),
+                    "current_crate_pouches": 0,
+                    "total_counted_pouches": tracker_state["total_counted_pouches"],
+                    "current_crates_count": 0,
+                    "total_counted_crates": tracker_state["total_counted_crates"],
+                    "last_audit_status": "SEARCHING FOR BAUMER CAMERA...",
+                    "last_audit_class": "badge-warn",
+                    "roi_enabled": roi_settings.get("enabled", True),
+                    "active_tracks_count": 0
+                }
+            else:
+                annotated_frame, telemetry = process_frame_detections(frame)
 
             # Downsample for responsive web streaming if very high res
             h, w = annotated_frame.shape[:2]
