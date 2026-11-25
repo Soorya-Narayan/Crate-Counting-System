@@ -9,6 +9,7 @@ Thumbs.db
 
 # Heavy model weights and checkpoints
 *.pt
+!milma_best.pt
 *.onnx
 *.engine
 *.bin
