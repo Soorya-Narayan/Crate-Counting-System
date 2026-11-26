@@ -11,6 +11,7 @@ Thumbs.db
 *.pt
 !milma_best.pt
 *.onnx
+!milma_best.onnx
 *.engine
 *.bin
 
